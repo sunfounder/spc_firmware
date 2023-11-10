@@ -1,0 +1,8 @@
+# directories and files
+/Listings
+
+# Compiled source
+*obj
+*lnp
+*uvopt
+*uvgui.*

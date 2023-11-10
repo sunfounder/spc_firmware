@@ -1,0 +1,92 @@
+#include "stc32g.h"
+#include "intrins.h"
+#include "delay.h"
+#include "power.h"
+
+#define BTN P33
+u8 flag = 0;
+
+void INT1_Isr() interrupt 2
+{
+    flag = 1;
+}
+
+void BtnInit()
+{
+    P3M0 &= ~0x08;
+    P3M1 |= 0x08; // 设置 P3.3 为高阻输入
+}
+
+void PowerSave()
+{
+    PowerInClose();
+    delayMs(20);
+    // IT1 = 0; //
+    IT1 = 1; //
+    EX1 = 1;
+
+    _nop_();
+    _nop_();
+    _nop_();
+    _nop_();
+    PD = 1;  // MCU
+    _nop_(); //
+    _nop_();
+    _nop_();
+    _nop_();
+
+    if (BTN == 0)
+    {
+        delayMs(5); // 消抖
+        if (BTN == 0)
+        {
+            PowerInHold();
+            PowerOutOpen();
+            return; // 退出
+        }
+    }
+
+    PowerSave();
+}
+
+void main()
+{
+    EAXFR = 1;    //
+    CKCON = 0x00; //
+    WTST = 0x00;  //
+
+    PowerIoInit();
+    PowerInHold(); // 将PWR 引脚高电平，维持电池给单片机供电
+    PowerOutOpen();
+
+    P2M0 &= ~0x08;
+    P2M1 &= ~0x08; // P23 准双向口
+
+    BtnInit();
+
+    EA = 1;
+
+    while (1)
+    {
+        if (BTN == 0)
+        {
+            delayMs(5);
+            if (BTN == 0)
+            {
+                PowerSave();
+            }
+        }
+
+        P23 = !P23;
+
+        // if (flag)
+        // {
+        //     delayMs(20);
+        // }
+        // else
+        // {
+        //     delayMs(5);
+        // }
+        delayMs(20);
+    }
+}
