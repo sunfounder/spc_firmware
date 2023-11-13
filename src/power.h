@@ -134,8 +134,8 @@ void setDac(u16 voltage);
 float pidCalculate(u16 current_vol);
 u16 calculateBatteryIR();
 void CapacityInit();
-u16 UpdateCapacity(int16 current, u16 interval);
-u8 UpdateBatteryPercentage();
+void UpdateCapacity(int16 current, u16 interval);
+void UpdateBatteryPercentage();
 
 void PowerManagerInLowBattery();
 void PowerMonitor();

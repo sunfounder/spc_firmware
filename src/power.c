@@ -371,6 +371,8 @@ float pidCalculate(u16 current_vol)
 #define MaxVoltage 8400  // mV 100% 时电压
 #define MaxCapacity 2000 // mAh 默认电池最大容量
 
+u8 P7caliFlag = 0;
+
 // u16 BatteryIR = 50;           // mOhm 电池内阻
 
 // /** 计算电池内阻 */
@@ -403,23 +405,28 @@ float pidCalculate(u16 current_vol)
 /** 上电时初始化电池剩余容量 */
 void CapacityInit()
 {
-    batteryVoltage = BatteryVoltageRead();
+    u16 _bat_volt = 0;
 
-    if (batteryVoltage > MaxVoltage)
+    _bat_volt = BatteryVoltageRead();
+
+    if (_bat_volt > MaxVoltage)
     {
         batteryCapctiy = MaxCapacity;
     }
-    else if (batteryVoltage < MinVoltage)
+    else if (_bat_volt < MinVoltage)
     {
         batteryCapctiy = 0;
     }
-    else if (batteryVoltage > P7Voltage)
+    else if (_bat_volt > P7Voltage)
     {
-        batteryCapctiy = (batteryVoltage - P7Voltage) * MaxCapacity * (1 - 0.07) / (MaxVoltage - P7Voltage);
+        // batteryCapctiy = _bat_volt;
+        // 注意计算顺序 和 数据类型、范围
+        // batteryCapctiy = (float)(_bat_volt - P7Voltage) / (MaxVoltage - P7Voltage) * MaxCapacity * (1 - 0.07);
+        batteryCapctiy = (_bat_volt - P7Voltage) / 1600.0 * 1860;
     }
-    else if (batteryVoltage < P7Voltage)
+    else if (_bat_volt < P7Voltage)
     {
-        batteryCapctiy = (batteryVoltage - MinVoltage) * MaxCapacity * (0.07) / (P7Voltage - MinVoltage);
+        batteryCapctiy = (float)(_bat_volt - MinVoltage) / (P7Voltage - MinVoltage) * MaxCapacity * (0.07);
     }
 }
 
@@ -427,35 +434,31 @@ void CapacityInit()
  * current 电流(mA)
  * interval 计算间隔（ms）
  */
-u16 UpdateCapacity(int16 current, u16 interval)
+void UpdateCapacity(int16 current, u16 interval)
 {
-    batteryCapctiy += (float)current * interval / 3600 / 1000;
+    // calibrate the capacity at 7% point
+    if (batteryVoltage < P7Voltage && P7caliFlag == 0;)
+    {
+        P7caliFlag = 1;
+        batteryCapctiy = (float)MaxCapacity * 0.07;
+    }
+    else if (batteryVoltage > P7caliFlag + 500)
+    {
+        P7caliFlag = 0;
+    }
+    // current integral
+    batteryCapctiy += current * (float)interval / 3600.0 / 1000.0;
     if (batteryCapctiy >= MaxCapacity)
     {
-        batteryCapctiy = MaxCapacity;
+        batteryCapctiy = (float)MaxCapacity;
     }
-    else if (batteryCapctiy < 0)
+    else if (batteryCapctiy <= 0)
     {
-        batteryCapctiy = 0;
+        batteryCapctiy = 0.0;
     }
-
-    return (u16)batteryCapctiy;
 }
 
-u8 UpdateBatteryPercentage()
+void UpdateBatteryPercentage()
 {
-    return (u8)batteryCapctiy / MaxCapacity * 100;
+    batteryPercentage = (u8)(batteryCapctiy / (float)MaxCapacity * 100);
 }
-// /* ----- 低电量时 -----
-
-// */
-// void PowerManagerInLowBattery()
-// {
-// }
-
-// /* ----- 电源数据读取 -----
-
-// */
-// void PowerMonitor()
-// {
-// }
