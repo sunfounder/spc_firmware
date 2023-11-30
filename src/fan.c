@@ -44,7 +44,11 @@ void FanSetSpeed(u8 speed)
 {
 #if FAN_USE_PWM
     u16 ccr = 0;
-    ccr = ((u32)_PWMA_PERIOD * speed / 100);
+    if (speed != 0)
+    {
+        speed += 20; //  spped从20才能启动
+        ccr = ((u32)_PWMA_PERIOD * speed / 120);
+    }
 
     P_SW2 |= 0x80;               // 使能扩展寄存器(XFR)访问
     PWMA_CCR4H = (u8)(ccr >> 8); // 设置PWM3占空比
