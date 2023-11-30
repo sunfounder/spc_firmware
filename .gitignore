@@ -1,8 +1,9 @@
 # directories and files
 /Listings
-
+/Objects
 # Compiled source
 *obj
 *lnp
 *uvopt
+*uvproj*
 *uvgui.*
