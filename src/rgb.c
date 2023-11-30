@@ -71,20 +71,20 @@ void rgbWrite(u8 r, u8 g, u8 b)
     ccr_g = ((u32)_PWMB_PERIOD * g / 255);
     ccr_b = ((u32)_PWMB_PERIOD * b / 255);
 
-    P_SW2 |= 0x80;                 // 使能扩展寄存器(XFR)访问
-    PWMB_CCR5H = (u8)(ccr_b >> 8); // 设置PWM5占空比
-    PWMB_CCR5L = (u8)(ccr_b);
-    PWMB_CCR6H = (u8)(ccr_g >> 8); // 设置PWM6占空比
-    PWMB_CCR6L = (u8)(ccr_g);
-    PWMB_CCR7H = (u8)(ccr_r >> 8); // 设置PWM7占空比
-    PWMB_CCR7L = (u8)(ccr_r);
-
-    // PWMB_CCR5H = (u8)(ccr_r >> 8); // 设置PWM5占空比
-    // PWMB_CCR5L = (u8)(ccr_r);
+    P_SW2 |= 0x80; // 使能扩展寄存器(XFR)访问
+    // PWMB_CCR5H = (u8)(ccr_b >> 8); // 设置PWM5占空比
+    // PWMB_CCR5L = (u8)(ccr_b);
     // PWMB_CCR6H = (u8)(ccr_g >> 8); // 设置PWM6占空比
     // PWMB_CCR6L = (u8)(ccr_g);
-    // PWMB_CCR7H = (u8)(ccr_b >> 8); // 设置PWM7占空比
-    // PWMB_CCR7L = (u8)(ccr_b);
+    // PWMB_CCR7H = (u8)(ccr_r >> 8); // 设置PWM7占空比
+    // PWMB_CCR7L = (u8)(ccr_r);
+
+    PWMB_CCR5H = (u8)(ccr_r >> 8); // 设置PWM5占空比
+    PWMB_CCR5L = (u8)(ccr_r);
+    PWMB_CCR6H = (u8)(ccr_g >> 8); // 设置PWM6占空比
+    PWMB_CCR6L = (u8)(ccr_g);
+    PWMB_CCR7H = (u8)(ccr_b >> 8); // 设置PWM7占空比
+    PWMB_CCR7L = (u8)(ccr_b);
 
 #else
     if (r != 0)
