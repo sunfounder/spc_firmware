@@ -8,9 +8,11 @@
  * _STC_Y6: stc8F/stc8A/stc8G/stc8H, 机器周期（1T）
  * _STC_32: 速度约为普通8051的 80倍
  */
-// #define _STC_Y1
-// #define _STC_Y6
-#define _STC_32
+// #define _STC_Y1_12MHz
+// #define _STC_Y6_12MHz
+// #define _STC32_12MHz
+#define _STC32_35MHz
+// #define _STC32_40MHz
 
 void delayMs(u32 ms);
 void delayUs(u32 us);
