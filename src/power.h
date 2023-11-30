@@ -2,7 +2,6 @@
 #define __POWER_H
 
 #include "stc32g.h"
-#include "eeprom.h"
 #include "types.h"
 #include "delay.h"
 #include "intrins.h"
@@ -51,14 +50,7 @@
         VBUS_3V3 -> ADC5 -> P1.5
 
 ---------------------------------------------------------------*/
-#define MAIN_Fosc 12000000L // 定义主时钟 12MHz
-
-/** --- eeprom 数据地址 ---- */
-#define EEPROM_CHECK_CODE 0x8F // eeprom 数据扇区校验值
-// 扇区1 0x0000 -> 0x01FF，掉电记忆+校验值
-#define POWER_MEMORY_EEPROM_ADDR 0x0000 // 掉电记忆eeprom地址 每个扇区512个字节(0x0200)
-// 扇区2 0x0200 -> 0x03FF，掉电记忆+校验值
-#define BATTERY_CAPACITY_EEPROM_ADDR 0x0600 // 电池容量eeprom地址
+#define MAIN_Fosc 35000000L // 定义主时钟 35MHz
 
 /** --- output  ---- */
 #define PWR_CTL P32  // PWR_CTL 引脚 P3.2, 开机时维持供电，保持高电平
@@ -76,7 +68,11 @@
 // pwm频率 = 系统时钟/（（预分频+1）/ （自动重装载值arr+1））= 12MHz / 2 / 600 = 10KHz
 #define _PWMB_PSCR 2     // 预分频 2
 #define _PWMB_PERIOD 600 // PWM周期 (PWMA_ARR自动重装值) 600
-#define DAC P03          // DAC，P03, 电池充电电流控制，0~1.5v, 1.5v时充电电流最大
+// pwm频率 = 系统时钟/（（预分频+1）/ （自动重装载值arr+1））= 40MHz / 4 / 1000 = 10KHz
+// #define _PWMB_PSCR 4      // 预分频 2
+// #define _PWMB_PERIOD 1000 // PWM周期 (PWMA_ARR自动重装值) 600
+//
+#define DAC P03 // DAC，P03, 电池充电电流控制，0~1.5v, 1.5v时充电电流最大
 
 /** --- adc  ---- */
 #define USB_VOLTAGE_CHANNEL 5  // 0x05
