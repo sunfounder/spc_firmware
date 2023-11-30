@@ -73,10 +73,12 @@ u8 getBoardID()
 
     P4M0 &= ~0x02;
     P4M1 |= 0x02; // P41 高阻输入
-    P3M0 &= ~0x80;
-    P3M1 |= 0x80; // P37 高阻输入
-    P3M0 &= ~0x40;
-    P3M1 |= 0x40; // P36 高阻输入
+    P4M0 &= ~0x04;
+    P4M1 |= 0x04; // P42 高阻输入
+    P4M0 &= ~0x08;
+    P4M1 |= 0x08; // P43 高阻输入
+
+    delayUs(100); // !!! 注意需要加延时>50us后再读值
 
     if (BD_0)
         id = 0x01;
@@ -90,6 +92,26 @@ u8 getBoardID()
     return id;
 }
 
+// STATUS_LED
+// =================================================================
+#define STATUS_LED P50
+
+void statusLEDInit()
+{
+    P5M0 |= 0x01;
+    P5M1 &= ~0x01; // P50, 推挽输出
+}
+
+void statusLEDOn()
+{
+    STATUS_LED = 1;
+}
+
+void statusLEDOff()
+{
+    STATUS_LED = 0;
+}
+
 // 中断优先级 （0~3级，数值越大，等级越高）
 // =================================================================
 #define TIME0_INTERRUPT_PRIORITY 2 // PT0H,PT0 (IPH ^ 1, IP ^ 1)
@@ -100,6 +122,8 @@ u8 getBoardID()
 // 函数声明
 // =================================================================
 void PowerSaveMode();
+void RTCSettingHandler();
+void RPiShutdown();
 
 // 全局变量
 // =================================================================
@@ -141,6 +165,23 @@ u8 edata dataBuffer[] = {
 };
 
 // ---------------setting----------------------
+#define maxSettingLen 12
+
+u8 edata settingBuffer[maxSettingLen] = {
+    0, // fan speed
+    1, // year
+    2, // month
+    3, // day
+    4, // hour
+    5, // minute
+    6, // second
+    7, // 1/128 second
+    8, // set rtc if value equals 1
+    9,
+    10,
+    11,
+};
+
 #define FanControlAddress 0x00
 u8 edata fanSpeed = 0;
 u8 edata lastFanSpeed = 0;
@@ -166,7 +207,7 @@ extern RTC_ConfigTypeDef rtcConfig;
 
 u8 isda;       // 设备地址标志
 u8 isma;       // 存储地址标志
-u8 islock;     // 数据同步锁
+u8 dataLock;   // 数据同步锁
 u8 edata addr; // i2c buffer address
 
 // ------------ I2C_Init ------------------------
@@ -199,7 +240,7 @@ void I2C_Init()
     isda = 1; // 用户变量初始化
     isma = 1;
     addr = 0;
-    islock = 0;
+    dataLock = 0;
     I2CTXD = dataBuffer[0];
 }
 
@@ -214,7 +255,7 @@ void I2C_Isr() interrupt 24
     {
         I2CSLST &= ~0x40;
         isda = 1; // 若为重复起始信号时必须作此设置
-        islock = 1;
+        dataLock = 1;
     }
     // --------- RECV事件 ---------
     else if (I2CSLST & 0x20)
@@ -240,40 +281,9 @@ void I2C_Isr() interrupt 24
         }
         else
         { // 处理RECV事件（RECV DATA）
-            if (I2CRXD != 181)
+            if (I2CRXD != 181 && addr <= maxSettingLen)
             {
-                switch (addr++)
-                {
-                case 0:
-                    fanSpeed = I2CRXD;
-                    dataBuffer[21] = fanSpeed;
-                    break;
-                case 1:
-                    rtcConfig.Year = I2CRXD;
-                    break;
-                case 2:
-                    rtcConfig.Month = I2CRXD;
-                    break;
-                case 3:
-                    rtcConfig.Day = I2CRXD;
-                    break;
-                case 4:
-                    rtcConfig.Hour = I2CRXD;
-                    break;
-                case 5:
-                    rtcConfig.Min = I2CRXD;
-                    break;
-                case 6:
-                    rtcConfig.Sec = I2CRXD;
-                    break;
-                case 7:
-                    rtcConfig.Ssec = I2CRXD;
-                case 8:
-                    ConfigRTC(&rtcConfig);
-                    break;
-                default:
-                    break;
-                }
+                settingBuffer[addr++] = I2CRXD;
             }
         }
     }
@@ -328,7 +338,7 @@ void I2C_Isr() interrupt 24
         I2CSLST &= ~0x08;
         isda = 1;
         isma = 1;
-        islock = 0;
+        dataLock = 0;
     }
 }
 
@@ -355,12 +365,12 @@ extern int edata dac_vol;
  定时器0初始化 (模式0， 16位自动重装载， 12T)
  * 注意 使能定时器中断
 */
-void Timer0_Init(void) // 5毫秒@40MHz
+void Timer0_Init(void) // 5毫秒@35MHz
 {
     AUXR &= 0x7F; // 定时器时钟12T模式
     TMOD &= 0xF0; // 设置定时器模式
-    TL0 = 0xE5;   // 设置定时初始值
-    TH0 = 0xBE;   // 设置定时初始值
+    TL0 = 0x09;   // 设置定时初始值
+    TH0 = 0xC7;   // 设置定时初始值
     TF0 = 0;      // 清除TF0标志
     TR0 = 1;      // 定时器0开始计时
 
@@ -382,11 +392,13 @@ void TM0_Isr() interrupt 1
     //     setDac(1500);
     //     dac_vol = 1500;
     // }
-
-    if (PowerSourceVoltageRead() < 3000)
+    if (boardID == 0)
     {
-        setDac(1500);
-        dac_vol = 1500;
+        if (PowerSourceVoltageRead() < 3000)
+        {
+            setDac(1500);
+            dac_vol = 1500;
+        }
     }
 }
 
@@ -404,6 +416,7 @@ u8 edata hasPressed = 0;
 
 u8 edata ShutdownRequest = 0;
 
+extern u8 edata lastRgbState;
 extern u8 edata SafeShutdownColor[];
 extern u8 edata ForceShutdownColor[];
 
@@ -423,20 +436,22 @@ enum
     DouleClicked = 2,             // 双击， 按下松开100ms（双击间隔）内按下再松开
     LongPressed2S = 3,            // 长按2s， 按下2s后未松开
     LongPressed2SAndReleased = 4, // 长按2s， 按下2s后松开
-    // LongPressed3S = 3, // 长按3s， 按下3s后未松开
-    LongPressed5S = 5, // 长按5s， 按下5s后未松开
+    LongPressed5S = 5,            // 长按5s， 按下5s后未松开
+    LongPressed5SAndReleased = 6, // 长按5s， 按下5s后松开
 
 } KeyState;
 
 //---------------------按键初始化--------------------------------------
 void BtnInit()
 {
+    // P3M0 &= ~0x08;
+    // P3M1 |= 0x08; // 设置 P3.3 为高阻输入
     P3M0 &= ~0x08;
-    P3M1 |= 0x08; // 设置 P3.3 为高阻输入
+    P3M1 &= ~0x08; // P3.3 准双向口
 }
 
 //---------------------按键检测及处理程序--------------------------------------
-void KeyHandler()
+void KeyStateHandler()
 {
     if (scanTimeCount > KeyDetectInterval)
     {
@@ -509,7 +524,7 @@ void KeyHandler()
                 }
                 else if (KeyState == LongPressed5S)
                 {
-                    // KeyState = LongPressed5SAndReleased;
+                    KeyState = LongPressed5SAndReleased;
                     hasPressed = 0;
                 }
                 else
@@ -532,58 +547,63 @@ void KeyHandler()
             KeyMachineState = BTN_UP;
             break;
         }
-
-        // -------------- 按键处理程序 --------------
-        switch (KeyState)
-        {
-        case SingleClicked: // 单击开启输出
-            KeyState = Released;
-            PowerOutOpen();
-            rgbWrite(0, 255, 0);
-            delayMs(100);
-            break;
-        case DouleClicked:
-            KeyState = Released;
-            rgbWrite(0, 0, 255);
-            delayMs(100);
-            rgbWrite(0, 0, 0);
-            delayMs(10);
-            PowerOutClose();
-            // PowerInClose();
-            PowerSaveMode();
-            break;
-        case LongPressed2S: // 长按的rgb显示需要放在RgbHandler中，避免灯显示冲突
-            KeyState = Released;
-            // rgbWrite(255, 120, 0);
-            // delayMs(200);
-            break;
-        case LongPressed2SAndReleased:
-            KeyState = Released;
-            rgbWrite(SafeShutdownColor[0], SafeShutdownColor[1], SafeShutdownColor[2]);
-            ShutdownRequest = 2; // 2，按键关机请求
-            dataBuffer[22] = ShutdownRequest;
-            delayMs(100);
-            break;
-        case LongPressed5S: // 长按5s, 强制关闭输出，同时断开PWR
-            KeyState = Released;
-            rgbWrite(ForceShutdownColor[0], ForceShutdownColor[1], ForceShutdownColor[2]);
-            delayMs(100);
-
-            rgbWrite(0, 0, 0);
-            delayMs(10);
-            // PowerOutClose();
-            // PowerInClose();
-            PowerSaveMode();
-            break;
-        default:
-            KeyState = Released;
-            // rgbWrite(5, 5, 5);
-            // delayMs(200);
-            break;
-        }
-
         // 检测间隔计数清零
         scanTimeCount = 0;
+    }
+}
+
+void KeyEventHandler()
+{
+    // -------------- 按键处理程序 --------------
+    switch (KeyState)
+    {
+    case SingleClicked: // 单击开启输出
+        KeyState = Released;
+        PowerOutOpen();
+        rgbWrite(0, 255, 0);
+        lastRgbState = 0; // 复位rgb状态
+        statusLEDOn();
+        delayMs(100);
+        break;
+    case DouleClicked:
+        KeyState = Released;
+        rgbWrite(0, 0, 255);
+        delayMs(100);
+        rgbWrite(0, 0, 0);
+        delayMs(10);
+        lastRgbState = 0; // 复位rgb状态
+        RPiShutdown();
+        break;
+    case LongPressed2S: // 长按的rgb显示需要放在RgbHandler中，避免灯显示冲突
+        // KeyState = Released;
+        // rgbWrite(255, 120, 0);
+        // delayMs(200);
+        break;
+    case LongPressed2SAndReleased:
+        KeyState = Released;
+        ShutdownRequest = 2; // 2，按键关机请求
+        dataBuffer[22] = ShutdownRequest;
+        rgbWrite(0, 0, 0);
+        delayMs(10);
+        lastRgbState = 0; // 复位rgb状态
+        break;
+    case LongPressed5S:
+        // rgbWrite(ForceShutdownColor[0], ForceShutdownColor[1], ForceShutdownColor[2]);
+        // delayMs(100);
+        break;
+    case LongPressed5SAndReleased:
+        KeyState = Released;
+        rgbWrite(0, 0, 0);
+        delayMs(10);
+        lastRgbState = 0; // 复位rgb状态
+        //
+        RPiShutdown();
+        break;
+    default:
+        // KeyState = Released;
+        // rgbWrite(5, 5, 5);
+        // delayMs(200);
+        break;
     }
 }
 
@@ -634,7 +654,7 @@ void RgbHandler()
     // power_source = 0;
     // is_usb_plugged_in = 0;
 
-    if ((KeyState == LongPressed2S) || (KeyState == LongPressed2SAndReleased))
+    if ((KeyState == LongPressed2S))
     {
         rgbWrite(SafeShutdownColor[0], SafeShutdownColor[1], SafeShutdownColor[2]);
         return;
@@ -686,33 +706,45 @@ void RgbHandler()
             rgbTimeCount = 0;
         }
     }
-    else if (power_source && outputState)
+    else if (outputState)
     {
-        if (rgbTimeCount > rgbStaticInterval || lastRgbState != 3)
+        if (power_source) // 电池供电，黄色
         {
-            lastRgbState = 3;
-            rgbWrite(batteryPoweredColor[0], batteryPoweredColor[1], batteryPoweredColor[2]);
+            if (rgbTimeCount > rgbStaticInterval || lastRgbState != 3)
+            {
+                lastRgbState = 3;
+                rgbWrite(batteryPoweredColor[0], batteryPoweredColor[1], batteryPoweredColor[2]);
+                rgbTimeCount = 0;
+            }
+        }
+        else if (is_usb_plugged_in) // usb供电，绿色
+        {
+            if (rgbTimeCount > rgbStaticInterval || lastRgbState != 4)
+            {
+                lastRgbState = 4;
+                rgbWrite(usbPoweredColor[0], usbPoweredColor[1], usbPoweredColor[2]);
+                rgbTimeCount = 0;
+            }
+        }
+        else // 未接usb，但开启输出，黄色
+        {
+            if (rgbTimeCount > rgbStaticInterval || lastRgbState != 3)
+            {
+                lastRgbState = 3;
+                rgbWrite(batteryPoweredColor[0], batteryPoweredColor[1], batteryPoweredColor[2]);
+                rgbTimeCount = 0;
+            }
+        }
+    }
+    else if (!outputState)
+    {
+        if (rgbTimeCount > rgbStaticInterval || lastRgbState != 5)
+        {
+            lastRgbState = 5;
+            rgbClose();
             rgbTimeCount = 0;
         }
     }
-    else if (is_usb_plugged_in && outputState)
-    {
-        if (rgbTimeCount > rgbStaticInterval || lastRgbState != 4)
-        {
-            lastRgbState = 4;
-            rgbWrite(usbPoweredColor[0], usbPoweredColor[1], usbPoweredColor[2]);
-            rgbTimeCount = 0;
-        }
-    }
-    // else if (!outputState)
-    // {
-    //     if (rgbTimeCount > rgbStaticInterval || lastRgbState != 5)
-    //     {
-    //         lastRgbState = 5;
-    //         rgbClose();
-    //         rgbTimeCount = 0;
-    //     }
-    // }
     else
     {
         // if (rgbTimeCount > rgbStaticInterval || lastRgbState != 6)
@@ -726,19 +758,18 @@ void RgbHandler()
 
 // 定时器1 (20ms)
 // =================================================================
-#define Time1Preiod 20;
+#define Time1Preiod 20
 u8 TimeCount20Flag = 0; //
 
 /**
- 定时器1初始化 (模式0， 24位自动重装载， 12T)
+ 定时器1初始化 (模式0， 16位自动重装载， 12T)
  */
-void Timer1_Init(void) // 20毫秒@40MHz
+void Timer1_Init(void) // 20毫秒@35MHz
 {
-    TM1PS = 0x01; // 设置定时器时钟预分频 ( 注意:并非所有系列都有此寄存器,详情请查看数据手册 )
     AUXR &= 0xBF; // 定时器时钟12T模式
     TMOD &= 0x0F; // 设置定时器模式
-    TL1 = 0xCA;   // 设置定时初始值
-    TH1 = 0x7D;   // 设置定时初始值
+    TL1 = 0x23;   // 设置定时初始值
+    TH1 = 0x1C;   // 设置定时初始值
     TF1 = 0;      // 清除TF1标志
     TR1 = 1;      // 定时器1开始计时
 
@@ -759,7 +790,14 @@ void TM1_Isr() interrupt 3
  * 电量计
  * 电池充电电流控制
  * 数据保存到date
+ * 电源状态
+ * 低电量发送关机请求
  */
+#define LOW_BATTERY_WARNING 20     // 20% 触发低电量警告（红灯闪烁）
+#define LOW_BATTERY_TO_POWER_OFF 5 // 5% 触发关机请求的电量阈值
+#define LOW_BATTERY_MAX_COUNT 250  // 5000 / 20, 持续5s中电池低于 5%时（避免adc测量误差问题）, 发送关机请求
+u16 lowPowerCount = 0;
+
 extern bool edata outputState;
 extern u8 edata is_usb_plugged_in;
 extern u8 edata power_source;
@@ -773,7 +811,8 @@ extern u16 edata outputCurrrent; // output
 extern u16 edata batteryVoltage;
 extern int16 edata batteryCurrent; // battery
 extern u8 edata batteryPercentage;
-extern u16 edata batteryCapctiy;
+// extern u16 edata batteryCapctiy;
+extern float edata batteryCapctiy;
 extern u16 edata vccVoltage;
 
 void powerProcess()
@@ -786,36 +825,25 @@ void powerProcess()
     outputCurrrent = OutputCurrentRead();
     batteryVoltage = BatteryVoltageRead();
     batteryCurrent = BatteryCurrentRead();
-    batteryCapctiy = UpdateCapacity(batteryCurrent, 20);
-    batteryPercentage = UpdateBatteryPercentage();
-    // ---- 电池百分比 ----
-    // if (batteryVoltage > 8400)
-    // {
-    //     batteryPercentage = 100;
-    // }
-    // else if (batteryVoltage < 6200)
-    // {
-    //     batteryPercentage = 0;
-    // }
-    // else
-    // {
-    //     batteryPercentage = (u8)((batteryVoltage - 6200) / 2200.0 * 100);
-    // }
+    UpdateCapacity(batteryCurrent, (u16)Time1Preiod);
+    UpdateBatteryPercentage();
 
-    // batteryCapctiy = (u16)(2000 * ((batteryVoltage - 6200) / 2200.0));
-
-    // // ---- 判断供电和电池状态 ----
+    // ---- 判断供电和电池状态 ----
     // isCharging
     if (batteryCurrent > 100)
         isCharging = 1;
-    else if (batteryCurrent < 50)
+    else if (batteryCurrent < 20)
         isCharging = 0;
 
     // isLowPower
-    if (batteryPercentage < 20)
+    if (batteryPercentage < LOW_BATTERY_WARNING)
+    {
         isLowPower = 1;
+    }
     else
+    {
         isLowPower = 0;
+    }
 
     // is_usb_plugged_in or power_source
     if (batteryCurrent < -100)
@@ -836,20 +864,37 @@ void powerProcess()
         is_usb_plugged_in = 1;
     }
 
-    // // ---- 充电管理 ---
-    if (PowerSourceVoltageRead() < 3100)
+    // 低电量关机管理
+    if (batteryPercentage < LOW_BATTERY_TO_POWER_OFF && is_usb_plugged_in == 0)
     {
-        setDac(1500);
-        dac_vol = 1500;
+        lowPowerCount++;
+        if (lowPowerCount >= LOW_BATTERY_MAX_COUNT)
+        {
+            ShutdownRequest = 1; // 1，低电量关机请求
+            dataBuffer[22] = ShutdownRequest;
+        }
     }
     else
     {
-        ChargeManager(usbVoltage);
+        lowPowerCount = 0;
+    }
+
+    // ---- 充电管理 ---
+    if (boardID == 0)
+    {
+        if (PowerSourceVoltageRead() < 3100)
+        {
+            setDac(1500);
+            dac_vol = 1500;
+        }
+        else
+        {
+            ChargeManager(usbVoltage);
+        }
     }
 
     // -------------- 数据保存 -----------------
-    // if (!islock)
-    if (1)
+    if (!dataLock)
     {
         dataBuffer[1] = vccVoltage >> 8 & 0xFF;
         dataBuffer[2] = (u8)(vccVoltage & 0xFF);
@@ -885,17 +930,70 @@ void powerProcess()
 
 // 风扇处理程序
 // =================================================================
+fan_start_count = 0;     // 100速度100ms来启动电机
+FAN_START_COUNT_MAX = 5; // 5*20 ms 约 100ms
 void FanHandler()
 {
-    if (lastFanSpeed != fanSpeed)
+    if (fanSpeed != settingBuffer[0])
     {
-        lastFanSpeed = fanSpeed;
+        fanSpeed = settingBuffer[0];
+        // FanSetSpeed(fanSpeed);
+        dataBuffer[21] = fanSpeed;
+        fan_start_count = 0;
+    }
+
+    if (fan_start_count == 0)
+    {
+        FanSetSpeed(100);
+        fan_start_count++;
+    }
+    else if (fan_start_count < FAN_START_COUNT_MAX)
+    {
+        fan_start_count++;
+    }
+    else if (fan_start_count == FAN_START_COUNT_MAX)
+    {
         FanSetSpeed(fanSpeed);
+        fan_start_count++;
     }
 }
 
+// RTC 设置程序
+// =================================================================
+void RTCSettingHandler()
+{
+    if (settingBuffer[8] == 1)
+    {
+        settingBuffer[8] = 0;
+
+        rtcConfig.Year = settingBuffer[1];
+        rtcConfig.Month = settingBuffer[2];
+        rtcConfig.Day = settingBuffer[3];
+        rtcConfig.Hour = settingBuffer[4];
+        rtcConfig.Min = settingBuffer[5];
+        rtcConfig.Sec = settingBuffer[6];
+        rtcConfig.Ssec = settingBuffer[7];
+
+        ConfigRTC(&rtcConfig);
+    }
+}
 // 树莓派关机信号处理程序
 // =================================================================
+void RPiShutdown()
+{
+    dataBuffer[22] = 0; //  ShutdownRequest 复位
+
+    if (boardID == 0 && is_usb_plugged_in == 0)
+    {
+        PowerSaveMode();
+    }
+    else
+    {
+        PowerOutClose();
+        statusLEDOff();
+    }
+}
+
 void RpiShutdownHandler()
 {
     if (RPI_STATE == 1)
@@ -903,10 +1001,7 @@ void RpiShutdownHandler()
         delayMs(5); // 5ms消抖
         if (RPI_STATE == 1)
         {
-            dataBuffer[22] = 0; //  ShutdownRequest 复位
-            // PowerOutClose();
-            // PowerInClose();
-            PowerSaveMode();
+            RPiShutdown();
         }
     }
 }
@@ -915,47 +1010,46 @@ void RpiShutdownHandler()
 // =================================================================
 void PowerSaveMode()
 {
-    u8 _flag = 0;
+    P23 = 0;
+    rgbWrite(255, 0, 0);
+    delayMs(10);
+    delayMs(100);
 
-    /**--------------------------进入休眠前的IO处理--------------------------------------*/
+    /**--------------------------进入休眠前的IO处理, 数据处理--------------------------------------*/
+    rgbClose();
+    delayMs(1);
+
+    PowerOutClose();
+    statusLEDOff();
+
+    ENLVR = 1; // 禁用系统低压复位
+    // LVDF = 0;
+    // ELVD = 0; //
+    // delayMs(2);
+
     PowerInClose();
-    delayMs(10); // 消抖
+    delayMs(50); // PowerInClose 后需要增加延时，
+                 // 否则不接纽扣电池时无法关机
+                 // 等待电池切换稳定， 否则导致按键信号触发，休眠被马上唤醒
 
     P0IE = 0x00; // 关闭IO数字信号功能，降低掉电模式下的耗电
     P1IE = 0x00;
-    // P2IE = 0x00;
-    // P3IE = 0x1E;
-    // P4IE = 0x00;
+    // // // P2IE = 0x00;
+    // // // P3IE = 0x1E;
+    // // // P4IE = 0x00;
+    ADC_POWER = 0; // 关闭 ADC_POWER, 降低休眠功耗
 
     KeyState = Released;
-
-    /**--------------------------开启外部中断--------------------------------------*/
-    // IT0 = 0; // 使能 INT0升沿和下降沿中断
-    // // IT0 = 1; //使能 INT0下降沿中断
-    // EX0 = 1; // 使能 INT0中断
-
-    // IT1 = 0; // 使能 INT1上升沿和下降沿中断
-    IT1 = 1; // 使能 INT1下降沿中断
-    EX1 = 1; // 使能 INT1中断
-
-    // EX2 = 1; // 使能 INT2下降沿中断
-    // EX3 = 1; // 使能 INT3下降沿中断
-    // EX4 = 1; // 使能 INT4下降沿中断
-
-    /** 测试 IO口 中断唤醒 程序复位，无法使用*/
-    // P3IM0 = 0x00;
-    // P3IM1 = 0x00;  // P3.3 下降沿中断模式
-    // P3INTE = 0x08; // 使能 P3.3 口中断
-    // P3WKUE = 0x08; // 使能 P3.3 口中断掉电唤醒
-
-    // delayMs(10); // 消抖
-
     scanTimeCount = 0;
     longPressCount = 0;
     doulePressCount = 0;
     rgbTimeCount = 0;
 
-    /**--------------------------进入休眠模式--------------------------------------*/
+    /**--------------------------设置外部中断INT1, 进入休眠--------------------------------------*/
+    IT1 = 0; // 使能 INT1下降沿中断
+    EX1 = 1; // 使能 INT1中断
+    EA = 1;
+
     _nop_();
     _nop_();
     _nop_();
@@ -968,76 +1062,51 @@ void PowerSaveMode()
     _nop_();
     _nop_();
 
-    /**--------------------------唤醒后--------------------------------------*/
-    PowerInHold();
-    PowerOutOpen();
-    rgbWrite(0, 0, 255); // 工作指示
-
+    /**--------------------------唤醒后处理--------------------------------------*/
+    // --------休眠后唤醒--------
     P0IE = 0xff;
     P1IE = 0xff;
+    PowerInHold();
+    // delayMs(2); // 等待上电稳定
+    PowerOutOpen();
 
-    // if (BTN == 0) // 按键被按下
-    // {
-    //     delayMs(25); // 消抖
-    //     if (BTN == 0)
-    //     {
-    //         _flag = 1;
-    //         // ----- 恢复供电 -----
-    //         // PowerInHold();
-    //         // PowerOutOpen();
-    //         P0IE = 0xff;
-    //         P1IE = 0xff;
-    //         rgbWrite(0, 0, 225); // 工作指示
-    //         delayMs(500);
-    //         // return; // error, 测试return 会导致单片机复位
-    //     }
-    // }
-
-    // if (_flag == 0)
-    // {
-    //     PowerSaveMode(); // 如果没有return， 重新进入休眠
-    // }
+    ADC_POWER = 1; // 重新打开 ADC_POWER, 等待1ms后，ADC 采样稳定
+    delayMs(2);    // 等待adc稳定
+    // EA = 1;
 }
 
 // 掉电唤醒后
-// void INT1_Isr() interrupt 2
-// {
-//     u8 _flag = 0;
+// 外部中断 INT1 中断服务函数
+void INT1_Isr() interrupt 2
+{
+}
 
-//     if (BTN == 0) // 按键被按下
-//     {
-//         delayMs(5); // 消抖
-//         if (BTN == 0)
-//         {
-//             _flag = 1;
-//             // ----- 恢复供电 -----
-//             PowerInHold();
-//             PowerOutOpen();
-//             // ET0 = 1;
-//             // ET1 = 1;
-//             rgbWrite(0, 0, 90); // 工作指示
-//             // delayMs(500);
-//             P0IE = 0xff;
-//             P1IE = 0xff;
-//             // return;
-//         }
-//     }
+// USB 未插入事件处理
+// =================================================================
+#define usbUnpluggedMaxCount 50 // 20ms * 50 = 1000ms = 1s
+u8 edata usbUnpluggedCount = 0;
 
-//     if (_flag == 0)
-//     {
-//         // ----- 否则，重新进入掉电模式 -----
-//         _nop_();
-//         _nop_();
-//         _nop_();
-//         _nop_();
-//         // IDL = 1; // MCU进入 IDLE模式
-//         PD = 1; // MCU进入掉电模式
-//         _nop_();
-//         _nop_();
-//         _nop_();
-//         _nop_();
-//     }
-// }
+/**输出关闭时，超过1s未插入usb, 进入休眠*/
+void UsbUnpluggedHandler()
+{
+    if (is_usb_plugged_in == 0)
+    {
+        usbUnpluggedCount += 1;
+    }
+    else
+    {
+        usbUnpluggedCount = 0;
+    }
+
+    if (usbUnpluggedCount > usbUnpluggedMaxCount)
+    {
+        usbUnpluggedCount = 0;
+        if (outputState == 0)
+        {
+            PowerSaveMode();
+        }
+    }
+}
 
 // init
 // =================================================================
@@ -1051,8 +1120,6 @@ void init()
 
     PowerIoInit();
     PowerInHold(); // 将PWR 引脚高电平，维持电池给单片机供电
-    // PowerManagerAtStart();
-    PowerOutOpen();
 
     boardID = getBoardID();
     dataBuffer[0] = boardID;
@@ -1062,23 +1129,39 @@ void init()
     // delayMs(50);
 
     rgbWrite(255, 255, 255); // 工作指示
-    delayMs(100);
+    // delayMs(100);
 
     P2M0 &= ~0x08;
     P2M1 &= ~0x08; // P23 准双向口
 
-    RTC_Init();
+    statusLEDInit();
+    statusLEDOn();
+
     BtnInit();
     AdcInit();
     FanInit();
+    dataBuffer[21] = 0;
     I2C_Init();
-    DacInit();
     Timer0_Init();
     Timer1_Init();
     EA = 1;
 
-    // 在adc开启后，读取电压，初始化当前电池容量
-    CapacityInit();
+    if (boardID == 0)
+    {
+        RTC_Init();
+        DacInit();
+
+        // 在adc开启后，读取电压，初始化当前电池容量
+        delayMs(5); // 等待adc稳定
+        CapacityInit();
+    }
+
+    // 若有电池，要等到读取电池初始化容量，才开启输出
+    // PowerOutOpen();
+    PowerManagerAtStart();
+
+    delayMs(200); // 等待树莓派上电稳定
+    rgbClose();   //
 }
 
 // main
@@ -1086,20 +1169,24 @@ void init()
 void main()
 {
     init();
-
     while (1)
     {
+        // // --------每 20ms 处理一次数据 --------
         if (TimeCount20Flag == 1)
         {
-
-            // P23 = !P23;
+            P23 = !P23;
             TimeCount20Flag = 0;
-            KeyHandler();
-            RgbHandler();
+
+            KeyStateHandler();
+            KeyEventHandler();
             FanHandler();
-            // RpiShutdownHandler();
+            // FanSetSpeed(100);
+            RTCSettingHandler();
+            RpiShutdownHandler();
             powerProcess();
+            UsbUnpluggedHandler();
+            RgbHandler(); // rgb 事件放在最后，使rgb快速响应状态
         }
-        // delayMs(15);
+        delayUs(50);
     }
 }
