@@ -34,6 +34,10 @@ void PowerIoInit()
     P3M1 &= ~0x10; // DC_EN  -> P3.4 推挽输出
     P3M0 |= 0x20;
     P3M1 &= ~0x20; // USB_EN_N -> P3.5 推挽输出
+    // 默认output 关闭
+    PWR_CTL = 0;
+    DC_EN = 0;
+    USB_EN_N = 0;
     // input 高阻输入
     P0M0 &= ~0x02;
     P0M1 |= 0x02; // CHG -> P0.1 高阻输入
@@ -65,12 +69,12 @@ void PowerIoInit()
 /** 维持电池给单片机供电 */
 void PowerInHold()
 {
-    PWR_CTL = 1; // 维持高电平， 维持给单片机供电
+    PWR_CTL = 1; // 维持高电平， 维持电池给单片机供电
 }
 
 void PowerInClose()
 {
-    PWR_CTL = 0; // 单片机断电
+    PWR_CTL = 0; // 电池断电
 }
 
 // ======================== 5V 输出相关 ==================================
@@ -81,8 +85,6 @@ void PowerOutOpen()
     DC_EN = 1;
     USB_EN_N = 1;
     outputState = 1;
-    IapErase(POWER_MEMORY_EEPROM_ADDR);         // 擦除EEPROM扇区
-    IapProgram(POWER_MEMORY_EEPROM_ADDR, 0x02); // 记忆输出打开
 }
 
 /** 打开5v输出,记忆状态 */
@@ -91,45 +93,38 @@ void PowerOutClose()
     DC_EN = 0;
     USB_EN_N = 0;
     outputState = 0;
-    IapErase(POWER_MEMORY_EEPROM_ADDR);         // 擦除EEPROM扇区
-    IapProgram(POWER_MEMORY_EEPROM_ADDR, 0x01); // 记忆输出关闭
 }
 
 /** 上电时恢复电源记忆 */
 void PowerManagerAtStart()
 {
-    /*当 ALWAYS_ON 为有效时（低电平）时，power 输出(),
-     *否则：
-     *    读取eeprom值
-     *    如果值为 0x01，power不输出
-     *    如果值为 0x02，power不输出
-     *    如果值错误，默认power不输出
+    u8 isON = 0;
+    /*当 ALWAYS_ON 为有效时（低电平）时：power 输出(),
+     *否则：关闭输出
      */
-    char stat = 0;
-
     if (ALWAYS_ON == 0)
     {
-        delayUs(500); // 消抖
+        delayUs(50); // 消抖
         if (ALWAYS_ON == 0)
         {
             PowerOutOpen(); // power输出
             return;
+            // isON = 1;
         }
     }
 
-    stat = IapRead(POWER_MEMORY_EEPROM_ADDR);
-    // EEPROM 的写操作只能将字节中的 1 写为 0，当需要将字节中的 0 写为 1，则必须执行扇区 擦除操作。
-    switch (stat)
+    // 若没有return
+    // if (isON == 0)
+    // {
+    //     PowerOutClose();
+    // }
+    if (UsbVoltageRead() > 3000) // 接了usb
     {
-    case 0x01: // 关闭输出
         PowerOutClose();
-        break;
-    case 0x02: // 开启输出
-        PowerOutOpen();
-        break;
-    default: // 默认power不输出
-        PowerOutClose();
-        break;
+    }
+    else // 未接了usb, 按下按键启动时，开启输出
+    {
+        PowerOutOpen(); // power输出
     }
 }
 
@@ -437,12 +432,12 @@ void CapacityInit()
 void UpdateCapacity(int16 current, u16 interval)
 {
     // calibrate the capacity at 7% point
-    if (batteryVoltage < P7Voltage && P7caliFlag == 0;)
+    if (batteryVoltage < P7Voltage && P7caliFlag == 0)
     {
         P7caliFlag = 1;
         batteryCapctiy = (float)MaxCapacity * 0.07;
     }
-    else if (batteryVoltage > P7caliFlag + 500)
+    else if (batteryVoltage > P7Voltage + 500)
     {
         P7caliFlag = 0;
     }
