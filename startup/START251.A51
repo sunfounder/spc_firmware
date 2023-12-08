@@ -114,7 +114,10 @@ HDATALEN	EQU	0	; the length of HDATA memory in bytes.
 ;
 ;STACKSIZE	EQU	 100H	; set to 100H Bytes.
 
-STACKSIZE	EQU	 200H	; 512byte, set to 200H Bytes.
+;STACKSIZE	EQU	 200H	; 512byte, set to 200H Bytes.
+
+STACKSIZE	EQU	 400H	; 1024byte, set to 400H Bytes.
+
 
 ;
 ;------------------------------------------------------------------------------
