@@ -7,7 +7,7 @@ u8 edata isLowPower = 0;
 u8 edata isCharging = 0;
 
 u16 edata usbVoltage = 0;
-u16 xdata usbCurrent = 0; // USB
+u16 edata usbCurrent = 0; // USB
 u16 edata outputVoltage = 0;
 u16 edata outputCurrrent = 0; // output
 u16 edata batteryVoltage = 0;
@@ -28,8 +28,8 @@ int edata gain = 2;
 void PowerIoInit()
 {
     // output 推挽输出
-    P3M0 |= 0x04;
-    P3M1 &= ~0x04; // PWR_CTL_CTL -> P3.2  推挽输出
+    P5M0 |= 0x01;
+    P5M1 &= ~0x01; // PWR_CTL_CTL -> P5.0  推挽输出
     P3M0 |= 0x10;
     P3M1 &= ~0x10; // DC_EN  -> P3.4 推挽输出
     P3M0 |= 0x20;
@@ -54,7 +54,7 @@ void PowerIoInit()
     P0M0 &= ~0x40;
     P0M1 |= 0x40; // OUTPUT_CURRENT -> ADC14 ->P0.6 高阻输入
     P1M0 &= ~0x01;
-    P1M1 |= 0x01; // BATTERY_CURRENT -> ADC0 ->P1.4 高阻输入
+    P1M1 |= 0x01; // BATTERY_CURRENT -> ADC0 ->P1.0 高阻输入
 
     P1M0 &= ~0x02;
     P1M1 |= 0x02; // OUTPUT_3V3 -> ADC1 ->P1.1 高阻输入
@@ -118,14 +118,14 @@ void PowerManagerAtStart()
     // {
     //     PowerOutClose();
     // }
-    if (UsbVoltageRead() > 3000) // 接了usb
-    {
-        PowerOutClose();
-    }
-    else // 未接了usb, 按下按键启动时，开启输出
-    {
-        PowerOutOpen(); // power输出
-    }
+    // if (UsbVoltageRead() > 3000) // 接了usb
+    // {
+    //     PowerOutClose();
+    // }
+    // else // 未接了usb, 按下按键启动时，开启输出
+    // {
+    //     PowerOutOpen(); // power输出
+    // }
 }
 
 // ========================  adc读值相关 ==================================
@@ -146,21 +146,33 @@ ADCTIM: ADC 时序控制寄存器
 #define VREFH_ADDR CHIPID7
 #define VREFL_ADDR CHIPID8
 
+// void AdcSetRate(void) // 200KSPS@35MHz
+// {
+//     ADCCFG &= ~0x0f;
+//     ADCCFG |= 0x01; // SPEED(1)
+//     ADCTIM = 0x3c;  // CSSETUP(0), CSHOLD(1), SMPDUTY(28)
+// }
+
+void AdcSetRate(void) // 186.17KSPS@35MHz
+{
+    ADCCFG &= ~0x0f;
+    ADCCFG |= 0x01; // SPEED(1)
+    ADCTIM = 0x3f;  // CSSETUP(0), CSHOLD(1), SMPDUTY(31)
+}
+
+// void AdcSetRate(void) // 74.468KSPS@35MHz
+// {
+//     ADCCFG &= ~0x0f;
+//     ADCCFG |= 0x04; // SPEED(4)
+//     ADCTIM = 0x3f;  // CSSETUP(0), CSHOLD(1), SMPDUTY(31)
+// }
+
 /** 初始化adc */
 void AdcInit()
 {
     EAXFR = 1; // 使能访问 XFR
 
-    // ADCCFG &= ~0x0f; // SPEED(0)
-    // ADCTIM = 0x2e;   // CSSETUP(0), CSHOLD(1), SMPDUTY(14)
-
-    // --- 50k @ 12MHz ---
-    ADCCFG &= ~0x0f;
-    ADCCFG |= 0x02; // SPEED(2)
-    ADCTIM = 0x38;  // CSSETUP(0), CSHOLD(1), SMPDUTY(24)
-
-    // ADCTIM = 0x3f; // 设置 ADC内部时序
-    // ADCCFG = 0x0f; // 设置 ADC时钟为系统时钟/2/16/16
+    AdcSetRate(); // 186.17KSPS@35MHz
 
     RESFMT = 1;    // RESFMT 结果右对齐
     ADC_POWER = 1; // ADC_POWER, 使能ADC模块
@@ -174,21 +186,65 @@ void AdcInit()
 /** adc读值 */
 u16 AdcRead(u8 channel)
 {
+    u8 i = 0;
     u16 adc_val = 0;
+    u16 count = 2000;
 
     ADC_CONTR &= 0xF0;    // 复位通道
     ADC_CONTR |= channel; // 选择adc通道
 
+#if 0 // 读3次值，丢弃前两次值，避免切换通道造成采样电容的残存电压影响
+    for (i = 0; i < 3; i++)
+    {
+        // adc 读取
+        ADC_START = 1; // 启动AD转换
+        _nop_();
+        _nop_();
+        _nop_();
+        _nop_();
+
+        while (!ADC_FLAG && count--)
+        { // 等待ADC完成
+            // delayUs(1);
+            _nop_();
+            _nop_();
+            _nop_();
+            _nop_();
+            _nop_();
+        }
+
+        ADC_FLAG = 0; // 清完成标志
+    }
+#else
     // adc 读取
     ADC_START = 1; // 启动AD转换
     _nop_();
     _nop_();
-    while (!ADC_FLAG)
-        ;                              // 等待ADC完成
-    ADC_FLAG = 0;                      // 清完成标志
-    adc_val = ADC_RES << 8 | ADC_RESL; // 读取ADC结果
-    // 计算电压毫伏
-    return (u16)(adc_val); // 12位adc 分辨率为 4096
+    _nop_();
+    _nop_();
+
+    while (!ADC_FLAG && count--)
+    { // 等待ADC完成
+        // delayUs(1);
+        _nop_();
+        _nop_();
+        _nop_();
+        _nop_();
+        _nop_();
+    }
+
+    ADC_FLAG = 0; // 清完成标志
+#endif
+
+    if (count != 0)
+    {
+        adc_val = ADC_RES << 8 | ADC_RESL; // 读取ADC结果
+        return (u16)(adc_val);             // 12位adc 分辨率为 4096
+    }
+    else
+    {
+        return 0; // 超时,返回0
+    }
 }
 
 u16 AdcReadVoltage(u8 channel)
@@ -363,7 +419,7 @@ float pidCalculate(u16 current_vol)
 #define P7Voltage 6800   // 电池 7% 电量测量点电压
 #define P3Voltage 6500   // 电池 3% 电量测量点电压
 #define MinVoltage 6200  // 电池 0% 电量测量点电压
-#define MaxVoltage 8400  // mV 100% 时电压
+#define MaxVoltage 8240  // mV 100% 时电压
 #define MaxCapacity 2000 // mAh 默认电池最大容量
 
 u8 P7caliFlag = 0;
@@ -416,12 +472,13 @@ void CapacityInit()
     {
         // batteryCapctiy = _bat_volt;
         // 注意计算顺序 和 数据类型、范围
-        // batteryCapctiy = (float)(_bat_volt - P7Voltage) / (MaxVoltage - P7Voltage) * MaxCapacity * (1 - 0.07);
-        batteryCapctiy = (_bat_volt - P7Voltage) / 1600.0 * 1860;
+        // batteryCapctiy = MaxCapacity*0.7 + (float)(_bat_volt - P7Voltage) / (MaxVoltage - P7Voltage) * MaxCapacity * (1 - 0.07);
+        batteryCapctiy = 140 + (_bat_volt - P7Voltage) / 1440.0 * 1860;
     }
     else if (_bat_volt < P7Voltage)
     {
-        batteryCapctiy = (float)(_bat_volt - MinVoltage) / (P7Voltage - MinVoltage) * MaxCapacity * (0.07);
+        // batteryCapctiy = (float)(_bat_volt - MinVoltage) / (P7Voltage - MinVoltage) * MaxCapacity * (0.07);
+        batteryCapctiy = (float)(_bat_volt - MinVoltage) / 600 * 140;
     }
 }
 
@@ -431,7 +488,8 @@ void CapacityInit()
  */
 void UpdateCapacity(int16 current, u16 interval)
 {
-    // calibrate the capacity at 7% point
+
+    // calibrate the capacity at 7 % point
     if (batteryVoltage < P7Voltage && P7caliFlag == 0)
     {
         P7caliFlag = 1;
