@@ -110,13 +110,6 @@ void delayMs(u32 ms) //@12.000MHz
 		i--;
 }
 
-void delayS(u32 s)
-{
-	while (s--)
-	{
-		delayMs(1000);
-	}
-}
 #endif
 
 #ifdef _STC32_35MHz
