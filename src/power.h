@@ -53,7 +53,7 @@
 #define MAIN_Fosc 35000000L // 定义主时钟 35MHz
 
 /** --- output  ---- */
-#define PWR_CTL P32  // PWR_CTL 引脚 P3.2, 开机时维持供电，保持高电平
+#define PWR_CTL P50  // PWR_CTL 引脚 P3.2, 开机时维持供电，保持高电平
 #define DC_EN P34    // DC_EN，P3.4 树莓派供电开关(5v输出开关)
 #define USB_EN_N P35 // USB_EN_N，P3.5 USB输出开关
 
@@ -65,12 +65,10 @@
 
 /** --- dac  ---- */
 // 注意 dac 和 rgb 都使用 PWMB, 初始化时 预分频 和 自动重装载值要一致，或者仅初始化一次
-// pwm频率 = 系统时钟/（（预分频+1）/ （自动重装载值arr+1））= 12MHz / 2 / 600 = 10KHz
-#define _PWMB_PSCR 2     // 预分频 2
-#define _PWMB_PERIOD 600 // PWM周期 (PWMA_ARR自动重装值) 600
-// pwm频率 = 系统时钟/（（预分频+1）/ （自动重装载值arr+1））= 40MHz / 4 / 1000 = 10KHz
-// #define _PWMB_PSCR 4      // 预分频 2
-// #define _PWMB_PERIOD 1000 // PWM周期 (PWMA_ARR自动重装值) 600
+// pwm频率 = 系统时钟/（（预分频+1）/ （自动重装载值arr+1））= 35MHz / 4 / 875 = 10KHz
+#define _PWMB_PSCR 4     // 预分频 2
+#define _PWMB_PERIOD 875 // PWM周期 (PWMA_ARR自动重装值) 600
+
 //
 #define DAC P03 // DAC，P03, 电池充电电流控制，0~1.5v, 1.5v时充电电流最大
 
@@ -84,7 +82,7 @@
 #define BATTERY_VOLTAGE_CHANNEL 3 // 0x03
 #define BATTERY_CURRENT_CHANNEL 0 // 0x00
 
-#define POWER_SOURCE_CHANNEL 4 // 0x06
+#define POWER_SOURCE_CHANNEL 4 // 0x04
 
 #define REF_VOLTAGE_CHANNEL 15 // 0x0f
 
