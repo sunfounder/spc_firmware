@@ -9,10 +9,10 @@
 void rgbInit()
 {
 
-    // P2M0 |= 0x07;
-    // P2M1 &= ~0x07; // 设置P2.0, P2.1, P2.2为推挽输出模式
-    P2M0 &= ~0x07;
-    P2M1 &= ~0x07; // 设置P2.0, P2.1, P2.2为 准双向口
+    P2M0 |= 0x07;
+    P2M1 &= ~0x07; // 设置P2.0, P2.1, P2.2为推挽输出模式
+    // P2M0 &= ~0x07;
+    // P2M1 &= ~0x07; // 设置P2.0, P2.1, P2.2为 准双向口
 
 #if LED_USE_PWM
     // PWMB (PWM5, PWM6, PWM7,)
@@ -72,19 +72,13 @@ void rgbWrite(u8 r, u8 g, u8 b)
     ccr_b = ((u32)_PWMB_PERIOD * b / 255);
 
     P_SW2 |= 0x80; // 使能扩展寄存器(XFR)访问
-    // PWMB_CCR5H = (u8)(ccr_b >> 8); // 设置PWM5占空比
-    // PWMB_CCR5L = (u8)(ccr_b);
-    // PWMB_CCR6H = (u8)(ccr_g >> 8); // 设置PWM6占空比
-    // PWMB_CCR6L = (u8)(ccr_g);
-    // PWMB_CCR7H = (u8)(ccr_r >> 8); // 设置PWM7占空比
-    // PWMB_CCR7L = (u8)(ccr_r);
 
-    PWMB_CCR5H = (u8)(ccr_r >> 8); // 设置PWM5占空比
-    PWMB_CCR5L = (u8)(ccr_r);
+    PWMB_CCR5H = (u8)(ccr_b >> 8); // 设置PWM5占空比
+    PWMB_CCR5L = (u8)(ccr_b);
     PWMB_CCR6H = (u8)(ccr_g >> 8); // 设置PWM6占空比
     PWMB_CCR6L = (u8)(ccr_g);
-    PWMB_CCR7H = (u8)(ccr_b >> 8); // 设置PWM7占空比
-    PWMB_CCR7L = (u8)(ccr_b);
+    PWMB_CCR7H = (u8)(ccr_r >> 8); // 设置PWM7占空比
+    PWMB_CCR7L = (u8)(ccr_r);
 
 #else
     if (r != 0)
@@ -93,6 +87,7 @@ void rgbWrite(u8 r, u8 g, u8 b)
         g = 1;
     if (b != 0)
         b = 1;
+
     LED_R = r;
     LED_G = g;
     LED_B = b;
