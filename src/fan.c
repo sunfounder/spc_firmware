@@ -47,7 +47,7 @@ void FanSetSpeed(u8 speed)
     if (speed != 0)
     {
         speed += 20; //  spped从20才能启动
-        ccr = ((u32)_PWMA_PERIOD * speed / 120);
+        ccr = (u16)(_PWMA_PERIOD / 120 * speed);
     }
 
     P_SW2 |= 0x80;               // 使能扩展寄存器(XFR)访问
