@@ -53,7 +53,10 @@ PowerSaveFlag = 0;
 
 // VERSION INFO
 // =================================================================
-#define VERSION "0.0.1"
+#define VERSION "1.0.0"
+#define VERSION_MAJOR 1
+#define VERSION_MINOR 0
+#define VERSION_MICRO 0
 
 // 产品ID
 // =================================================================
@@ -63,6 +66,7 @@ PowerSaveFlag = 0;
     0   0   1    Pironman Hat
     -   -   -
 */
+
 #define BD_2 P43
 #define BD_1 P42
 #define BD_0 P41
@@ -180,6 +184,10 @@ u8 edata dataBuffer[] = {
     27, // MIN
     28, // SEC
     29, // SSEC
+
+    30, // Firmware Version major
+    31, // Firmware Version minor
+    32, // Firmware Version micro
 };
 
 // ---------------setting----------------------
@@ -289,15 +297,6 @@ void I2C_Isr() interrupt 24
         { // 处理RECV事件（RECV MEMORY ADDR）
             isma = 0;
             addr = I2CRXD;
-
-            // if (addr == i2cRTCReadStartAddress)
-            // {
-            //     I2CTXD = YEAR;
-            // }
-            // else
-            // {
-            //     I2CTXD = dataBuffer[addr];
-            // }
             I2CTXD = dataBuffer[addr];
         }
         else
@@ -319,54 +318,6 @@ void I2C_Isr() interrupt 24
         }
         else // 接收到ACK则继续读取数据
         {
-#if 0
-            if (addr >= i2cRTCReadAddress)
-            {
-                addr++;
-                switch (addr - i2cRTCReadAddress)
-                {
-                case 1:
-                    I2CTXD = MONTH;
-                    break;
-                case 2:
-                    I2CTXD = DAY;
-                    break;
-                case 3:
-                    I2CTXD = HOUR;
-                    break;
-                case 4:
-                    I2CTXD = MIN;
-                    break;
-                case 5:
-                    I2CTXD = SEC;
-                    break;
-                case 6:
-                    I2CTXD = SSEC;
-                    break;
-                default:
-                    I2CTXD = 0xff;
-                    break;
-                }
-            }
-            else
-            {
-                I2CTXD = dataBuffer[++addr];
-            }
-#endif
-            // addr++;
-            // addrOffset = addr - i2cRTCReadAddress;
-            // if (addrOffset < 0)
-            // {
-            //     I2CTXD = dataBuffer[addr];
-            // }
-            // // // else if (addrOffset < 6)
-            // // // {
-            // // //     I2CTXD = (*(unsigned char volatile far *)(0x7efe71 + addrOffset));
-            // // // }
-            // else
-            // {
-            //     I2CTXD = 0xff;
-            // }
             I2CTXD = dataBuffer[++addr];
         }
     }
@@ -425,20 +376,6 @@ void TM0_Isr() interrupt 1
     longPressCount += Time0Preiod;
     doulePressCount += Time0Preiod;
     rgbTimeCount += Time0Preiod;
-
-    // if (POWER_SOURCE == 0)
-    // {
-    //     setDac(1500);
-    //     dac_vol = 1500;
-    // }
-    if (boardID == 0)
-    {
-        if (PowerSourceVoltageRead() < 3000)
-        {
-            setDac(1500);
-            dac_vol = 1500;
-        }
-    }
 
     // time
     dataBuffer[23] = YEAR;
@@ -808,14 +745,15 @@ void RgbHandler()
 // 外部中断0（INT0 P32 上升沿中断唤醒）
 // 外部中断1（INT1 P33 下降沿中断唤醒）
 // =================================================================
-u8 edata hasSleep = false; // 是否进入过休眠
-
+u8 edata hasSleep = false;  // 是否进入过休眠
+u8 edata hasSleep2 = false; //
 void PowerSaveMode()
 {
 #if 0
     PowerSaveFlag = 1;
 #else
     hasSleep = true;
+    hasSleep2 = true; //
     testPin = 0;
 
     /**--------------------------进入休眠前的IO处理, 数据处理--------------------------------------*/
@@ -842,6 +780,8 @@ void PowerSaveMode()
     LED_G = 1;
     LED_B = 1;
 
+    // ADC_POWER = 0; // 关闭 ADC_POWER, 降低休眠功耗 // 测试会死机
+
     /** 关闭IO数字信号输入功能， 降低掉电模式下的耗电
      * 若 I/O 被当作比较器输入口、ADC 输入口或者触摸按键输入口等模拟口时，
      * 进入时钟停振模式前，必须设置为 0，否则会有额外的耗电。
@@ -853,8 +793,6 @@ void PowerSaveMode()
     P2IE = 0x00; // 关闭IO数字信号输入功能， 顺便可以关闭i2c引脚（P24, P25）的唤醒功能
     P3IE = 0x0C; // 仅保留 P32（USB, INT0）, P33（按键, INT1） 的引脚输入功能，用于唤醒
     P4IE = 0x00;
-
-    ADC_POWER = 0; // 关闭 ADC_POWER, 降低休眠功耗
 
     delayMs(10);
 
@@ -868,7 +806,8 @@ void PowerSaveMode()
     PowerInClose();
     // delayMs(10); // 电流表超量程后，死机
     // delayMs(5); // 电流表超量程后，死机
-    delayMs(1); // 电流表跳到约100uA，再保持在约20uA
+    // delayMs(1); // 电流表跳到约100uA，再保持在约20uA
+    delayMs(5); // 电流表跳到约100uA，再保持在约20uA
     // delayUs(200); // // 电流表约0不跳动，电池灯灭，但电池还在供电
     // delayUs(5); // 电流表约0不跳动，电池灯灭，但电池还在供电
 
@@ -885,6 +824,8 @@ void PowerSaveMode()
     _nop_();
 
     /**--------------------------唤醒后处理--------------------------------------*/
+    EA = 0;
+
     // 使能IO数字输入功能
     P0IE = 0xff;
     P1IE = 0xff;
@@ -906,10 +847,19 @@ void PowerSaveMode()
     delayMs(10);
     rgbWrite(0, 200, 0);
 
-    ADC_POWER = 1; // 重新打开 ADC_POWER, 等待1ms后，ADC 采样稳定
-    delayMs(5);    // 等待adc稳定
+    // ADC_POWER = 1; // 重新打开 ADC_POWER, 等待1ms后，ADC 采样稳定
+    // delayMs(5);    // 等待adc稳定
 
-    delayMs(200); // 等待树莓派上电
+    delayMs(20);
+    EA = 1;
+    // delayMs(200); // 等待树莓派上电
+    // EA = 1;
+    // testPin = 1;
+    // delayMs(50);
+    // while (1)
+    // {
+    //     delayMs(200); // 等待树莓派上电
+    // }
 
 #endif
 }
@@ -985,39 +935,19 @@ extern float edata batteryCapctiy;
 extern u16 edata vccVoltage;
 extern u16 edata powerSourceVoltage;
 
-u16 _adcVal = 0;
-
 void powerProcess()
 {
     // ---- 读取数据 ----
-    _adcVal = VccVoltageRead();
-    if (_adcVal != 0)
-        vccVoltage = _adcVal;
-    _adcVal = UsbVoltageRead();
-    if (_adcVal != 0)
-        usbVoltage = _adcVal;
-    _adcVal = UsbCurrentRead();
-    if (_adcVal != 0)
-        usbCurrent = _adcVal;
-    _adcVal = OutputVoltageRead();
-    if (_adcVal != 0)
-        outputVoltage = _adcVal;
-    _adcVal = OutputCurrentRead();
-    if (_adcVal != 0)
-        outputCurrrent = _adcVal;
-    _adcVal = BatteryVoltageRead();
-    if (_adcVal != 0)
-        batteryVoltage = _adcVal;
+    VccVoltageRead();
+    UsbVoltageRead();
+    UsbCurrentRead();
+    OutputVoltageRead();
+    OutputCurrentRead();
+    BatteryVoltageRead(true);
+    BatteryCurrentRead(true);
 
-    _adcVal = BatteryCurrentRead();
-    if (_adcVal != 0)
-        batteryCurrent = _adcVal;
-
-    if (batteryVoltage > 6000 && batteryVoltage < 8500)
-    {
-        UpdateCapacity(batteryCurrent, (u16)Time1Preiod);
-        UpdateBatteryPercentage();
-    }
+    UpdateCapacity(batteryCurrent, (u16)Time1Preiod);
+    UpdateBatteryPercentage();
 
     // ---- 判断供电和电池状态 ----
     // isCharging
@@ -1056,7 +986,7 @@ void powerProcess()
         is_usb_plugged_in = 1;
     }
 
-    // 低电量关机管理
+    // // 低电量关机管理
     // if (batteryPercentage < LOW_BATTERY_TO_POWER_OFF && is_usb_plugged_in == 0)
     // {
     //     lowPowerCount++;
@@ -1074,19 +1004,15 @@ void powerProcess()
     // ---- 充电管理 ---
     if (boardID == 0)
     {
-        _adcVal = PowerSourceVoltageRead();
-        if (_adcVal != 0)
+        PowerSourceVoltageRead();
+        if (powerSourceVoltage < 3100)
         {
-            powerSourceVoltage = _adcVal;
-            if (powerSourceVoltage < 3100)
-            {
-                setDac(1500);
-                dac_vol = 1500;
-            }
-            else
-            {
-                ChargeManager(usbVoltage);
-            }
+            setDac(1500);
+            dac_vol = 1500;
+        }
+        else
+        {
+            ChargeManager(usbVoltage);
         }
     }
 
@@ -1122,45 +1048,59 @@ void powerProcess()
     dataBuffer[18] = power_source & 0xFF;
     dataBuffer[19] = is_usb_plugged_in & 0xFF;
     dataBuffer[20] = isCharging & 0xFF;
-    // }
-
-    // if (batteryVoltage < 6800)
-    // {
-    //     while (1)
-    //     {
-    //         delayMs(10);
-    //     }
-    // }
 }
 
 // 风扇处理程序
 // =================================================================
-fan_start_count = 0;     // 100速度100ms来启动电机
-FAN_START_COUNT_MAX = 5; // 5*20 ms 约 100ms
+fanStartCount = 0; // 100速度100ms来启动电机
+ActiveCoolingFlag = false;
+
+#define ActiveCoolingThreshold 2000 // mA, 电池放电>2A, 主动开启风扇，对电源IC散热
+#define ActiveCoolingSpeed 80
+#define FAN_START_COUNT_MAX 5 // 5*20 ms 约 100ms
 
 void FanHandler()
 {
-    if (fanSpeed != settingBuffer[0])
+
+    // 如果电流大于 2A，主动开启风扇到 80 以上，对电源IC散热
+    if (batteryCurrent > 2000 && settingBuffer[0] < 80)
     {
-        fanSpeed = settingBuffer[0];
-        // FanSetSpeed(fanSpeed);
+        fanSpeed = 80;
         dataBuffer[21] = fanSpeed;
-        fan_start_count = 0;
+        fanStartCount = 0;
+    }
+    else // 获取i2c主机控制风扇
+    {
+        if (fanSpeed != settingBuffer[0])
+        {
+            fanSpeed = settingBuffer[0];
+            dataBuffer[21] = fanSpeed;
+            fanStartCount = 0;
+        }
     }
 
-    if (fan_start_count == 0)
+    // 风速改变时，控制风扇pwm
+    if (fanStartCount == 0)
     {
-        FanSetSpeed(100);
-        fan_start_count++;
+        if (fanSpeed == 0)
+        {
+            FanSetSpeed(0);
+            fanStartCount = FAN_START_COUNT_MAX + 1;
+        }
+        else
+        {
+            FanSetSpeed(100);
+            fanStartCount++;
+        }
     }
-    else if (fan_start_count < FAN_START_COUNT_MAX)
+    else if (fanStartCount < FAN_START_COUNT_MAX)
     {
-        fan_start_count++;
+        fanStartCount++;
     }
-    else if (fan_start_count == FAN_START_COUNT_MAX)
+    else if (fanStartCount == FAN_START_COUNT_MAX)
     {
         FanSetSpeed(fanSpeed);
-        fan_start_count++;
+        fanStartCount++;
     }
 }
 
@@ -1213,16 +1153,6 @@ void RpiShutdownHandler()
     }
 }
 
-// USB 和 电池 都未接事件处理
-// =================================================================
-void NoPowerHandler()
-{
-    if (is_usb_plugged_in == 0 && batteryVoltage < 6000)
-    {
-        PowerSaveMode();
-    }
-}
-
 // USB 未插入事件处理
 // =================================================================
 #define usbUnpluggedMaxCount 50 // 20ms * 50 = 1000ms = 1s
@@ -1246,6 +1176,50 @@ void UsbUnpluggedHandler()
     }
 }
 
+// 电池插拔事件处理
+// =================================================================
+extern u8 edata is_bat_plugged_in;
+
+void batPlugHandler()
+{
+    if (is_bat_plugged_in == false)
+    {
+        if (batteryVoltage > MinVoltage)
+        {
+            CapacityInit();
+        }
+    }
+}
+
+#define batUnpluggedMaxCount 5 // 20ms * 5 = 100ms = 1s
+u8 edata batUnpluggedCount = 0;
+
+// 连续5次电压低于6.2V, 则认定为电池拔出
+void batUnplugHandler()
+{
+    if (batteryVoltage < MinVoltage && is_bat_plugged_in == true)
+    {
+        batUnpluggedCount++;
+        if (batUnpluggedCount > batUnpluggedMaxCount)
+        {
+            is_bat_plugged_in = true;
+        }
+    }
+    else
+    {
+        batUnpluggedCount = 0;
+    }
+}
+// USB 和 电池 都未接事件处理
+// =================================================================
+void NoPowerHandler()
+{
+    if (is_usb_plugged_in == false && is_bat_plugged_in == false)
+    {
+        PowerSaveMode();
+    }
+}
+
 // init
 // =================================================================
 void init()
@@ -1255,11 +1229,24 @@ void init()
     WTST = 0x00;  // 设置程序代码等待参数，
                   // 赋值为 0 可将 CPU执行程序的速度设置为最快
 
+    // UART 串口引脚下拉
+    P4M0 |= 0xc0;
+    P4M1 &= ~0xc0;
+
+    P46 = 0;
+    P47 = 0;
+
     PowerIoInit();
     PowerInHold(); // 将PWR 引脚高电平，维持电池给单片机供电
 
     boardID = getBoardID();
-    // dataBuffer[0] = boardID;
+    dataBuffer[0] = boardID;
+
+    dataBuffer[30] = VERSION_MAJOR;
+    dataBuffer[31] = VERSION_MINOR;
+    dataBuffer[32] = VERSION_MICRO;
+
+    dataBuffer[21] = 0;
 
     rgbInit();               // 初始化rgb灯
     rgbWrite(200, 200, 200); // 工作指示, 白灯
@@ -1268,13 +1255,12 @@ void init()
     statusLEDOn();
 
     testPinInit();
-    testPin = 1;
+    testPin = 0;
     delayMs(20);
 
     BtnInit();
     AdcInit();
     FanInit();
-    dataBuffer[21] = 0;
     I2C_Init();
     Timer0_Init();
     Timer1_Init();
@@ -1291,6 +1277,7 @@ void init()
     }
 
     // 若有电池，要等到读取电池初始化容量，才开启输出
+    delayMs(100);
     // PowerOutOpen();
     PowerManagerAtStart();
 
@@ -1309,10 +1296,10 @@ void main()
         {
             // testPin = !testPin;
             TimeCount20Flag = 0;
-            // rgbWrite(0, 0, 255);
 
-            powerProcess();
-
+            powerProcess(); // 注意 函数执行顺序不能随意更换
+            batPlugHandler();
+            batUnplugHandler();
             NoPowerHandler();
             UsbUnpluggedHandler();
 
@@ -1332,7 +1319,10 @@ void main()
                 hasSleep = false;
             }
         }
-
+        if (hasSleep2)
+        {
+            testPin = 1;
+        }
         delayUs(50);
     }
 }
