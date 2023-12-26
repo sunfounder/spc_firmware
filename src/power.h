@@ -86,13 +86,16 @@
 
 #define REF_VOLTAGE_CHANNEL 15 // 0x0f
 
+#define USB_VOLTAGE_GAIN 2.0 //((float)(100 + 100) / 100.0)
+#define USB_CURRENT_GAIN 2.0 //((float)(1/0.005 / 100)
+
+#define OUTPUT_VOLTAGE_GAIN 2.0 //((float)(100 + 100) / 100.0)
+#define OUTPUT_CURRENT_GAIN 2.0 //((float)(1/0.005 / 100)
+
 #define BATTERY_VOLTAGE_GAIN 3.0 // ((float)(200 + 100) / 100.0)
-#define USB_VOLTAGE_GAIN 2.0     //((float)(100 + 100) / 100.0)
-#define OUTPUT_VOLTAGE_GAIN 2.0  //((float)(100 + 100) / 100.0)
+#define BATTERY_CURRENT_GAIN 2.0 //((float)(1/0.005 / 100)
 
 #define POWER_SOURCE_VOLTAGE_GAIN 2.0 //((float)(100 + 100) / 100.0)
-
-#define REF_BGV 1190 // 1.19V 或者从 CHIPID中读取内部参考电压值(VREFH_ADDR << 8) + VREFL_ADDR
 
 /** --- 充电电流调节pid参数 ---- */
 #define targetVoltage 4900
@@ -101,6 +104,14 @@
 #define kp 0.08
 #define ki 0.0
 #define kd 0.05
+
+// 电池电量相关
+// =============================================================
+#define P7Voltage 6800   // 电池 7% 电量测量点电压
+#define P3Voltage 6500   // 电池 3% 电量测量点电压
+#define MinVoltage 6200  // 电池 0% 电量测量点电压
+#define MaxVoltage 8240  // mV 100% 时电压
+#define MaxCapacity 2000 // mAh 默认电池最大容量
 
 /** ------函数声明----------- */
 void PowerIoInit();
@@ -113,15 +124,16 @@ void PowerManagerAtStart();
 
 void AdcInit();
 u16 AdcRead(u8 channel);
+u16 AdcReadVoltage(u8 channel);
+u16 VccVoltageRead();
 u16 UsbVoltageRead();
 u16 UsbCurrentRead();
-u16 BatteryVoltageRead();
-int16 BatteryCurrentRead();
 u16 OutputVoltageRead();
 u16 OutputCurrentRead();
-u16 RefVoltageRead();
-u16 VccVoltageRead();
+u16 BatteryVoltageRead(bool filter);
+int16 BatteryCurrentRead(bool filter);
 u16 PowerSourceVoltageRead();
+
 void ChargeManager(u16 current_vol);
 void DacInit();
 void setDac(u16 voltage);

@@ -1,30 +1,55 @@
 #include "power.h"
 
+// power status
 bool edata outputState = 0;
 u8 edata is_usb_plugged_in = 0;
+u8 edata is_bat_plugged_in = 0;
 u8 edata Power_Source = 0;
 u8 edata isLowPower = 0;
 u8 edata isCharging = 0;
 
+// adc power Voltage Current
 u16 edata usbVoltage = 0;
 u16 edata usbCurrent = 0; // USB
 u16 edata outputVoltage = 0;
 u16 edata outputCurrrent = 0; // output
 u16 edata batteryVoltage = 0;
-int16 edata batteryCurrent = 0; // battery
+int16 edata batteryCurrent = 0; // battery, ！！！注意这是有符号的
 u16 edata powerSourceVoltage = 0;
 
-u16 edata vccVoltage = 0;
+u16 edata vccVoltage = 0; // ADC_Vref+
 
+// battery capcity
 u8 edata batteryPercentage = 0;
 float edata batteryCapctiy = 0;
 
 u16 refVoltage = 0;
 
 int BGV;
-int edata gain = 2;
 
-// =========================== 初始化 ==================================
+// adc filter
+// =================================================================
+// Median filter
+// u32 edata batteryVoltageFilterSum = 0;
+// u16 edata batteryVoltageFilterIndex = 0;
+// u16 edata batteryVoltageFilterBuffer[MedianFilterSize] = {0};
+// u16 edata batteryVoltageFilterMin = 0;
+// u16 edata batteryVoltageFilterMax = 0;
+
+// error count filter
+#define BatVoltMaxVaildError 500 // 最大有效偏差，正负500
+#define BatVoltMaxErrorCount 5   // 连续5次，超过最大偏差，则认为是有效数值
+u16 lastVaildBatVolt = 0;        //
+u8 batVoltErrorCount = 0;        //
+int32 batVoltError = 0;          // 注意有符号
+
+#define BatCurrMaxVaildError 500 // 最大有效偏差，正负500
+#define BatCurrMaxErrorCount 5   // 连续5次，超过最大偏差，则认为是有效数值
+int16 lastVaildBatCurr = 0;      // 注意有符号
+u8 batCurrErrorCount = 0;        //
+u32 batCurrError = 0;            // 注意有符号
+
+// =========================== IO模式初始化 ==================================
 void PowerIoInit()
 {
     // output 推挽输出
@@ -114,18 +139,18 @@ void PowerManagerAtStart()
     }
 
     // 若没有return
-    // if (isON == 0)
-    // {
-    //     PowerOutClose();
-    // }
-    // if (UsbVoltageRead() > 3000) // 接了usb
-    // {
-    //     PowerOutClose();
-    // }
-    // else // 未接了usb, 按下按键启动时，开启输出
-    // {
-    //     PowerOutOpen(); // power输出
-    // }
+    if (isON == 0)
+    {
+        PowerOutClose();
+    }
+    if (UsbVoltageRead() > 3000) // 接了usb
+    {
+        PowerOutClose();
+    }
+    else // 未接了usb, 按下按键启动时，开启输出
+    {
+        PowerOutOpen(); // power输出
+    }
 }
 
 // ========================  adc读值相关 ==================================
@@ -141,10 +166,38 @@ ADCCFG：ADC 配置寄存器
         5
        RESFMT
 ADCTIM: ADC 时序控制寄存器
-
 ------------------------------------------------------------ */
 #define VREFH_ADDR CHIPID7
 #define VREFL_ADDR CHIPID8
+u16 _adcVal = 0;
+
+// void AdcSetRate(void) // 50KSPS@35MHz
+// {
+//     ADCCFG &= ~0x0f;
+//     ADCCFG |= 0x06; // SPEED(6)
+//     ADCTIM = 0xff;  // CSSETUP(1), CSHOLD(3), SMPDUTY(31)
+// }
+
+void AdcSetRate(void) // 74.468KSPS@35MHz
+{
+    ADCCFG &= ~0x0f;
+    ADCCFG |= 0x04; // SPEED(4)
+    ADCTIM = 0x3f;  // CSSETUP(0), CSHOLD(1), SMPDUTY(31)
+}
+
+// void AdcSetRate(void) // 100KSPS@35MHz
+// {
+//     ADCCFG &= ~0x0f;
+//     ADCCFG |= 0x03; // SPEED(3)
+//     ADCTIM = 0x3c;  // CSSETUP(0), CSHOLD(1), SMPDUTY(28)
+// }
+
+// void AdcSetRate(void) // 186.17KSPS@35MHz
+// {
+//     ADCCFG &= ~0x0f;
+//     ADCCFG |= 0x01; // SPEED(1)
+//     ADCTIM = 0x3f;  // CSSETUP(0), CSHOLD(1), SMPDUTY(31)
+// }
 
 // void AdcSetRate(void) // 200KSPS@35MHz
 // {
@@ -153,34 +206,24 @@ ADCTIM: ADC 时序控制寄存器
 //     ADCTIM = 0x3c;  // CSSETUP(0), CSHOLD(1), SMPDUTY(28)
 // }
 
-void AdcSetRate(void) // 186.17KSPS@35MHz
-{
-    ADCCFG &= ~0x0f;
-    ADCCFG |= 0x01; // SPEED(1)
-    ADCTIM = 0x3f;  // CSSETUP(0), CSHOLD(1), SMPDUTY(31)
-}
-
-// void AdcSetRate(void) // 74.468KSPS@35MHz
-// {
-//     ADCCFG &= ~0x0f;
-//     ADCCFG |= 0x04; // SPEED(4)
-//     ADCTIM = 0x3f;  // CSSETUP(0), CSHOLD(1), SMPDUTY(31)
-// }
-
 /** 初始化adc */
 void AdcInit()
 {
     EAXFR = 1; // 使能访问 XFR
 
-    AdcSetRate(); // 186.17KSPS@35MHz
+    // AdcSetRate();
+
+    ADCCFG = 0x2f; // 设置 ADC 时钟为系统时钟/2/16
+    ADCTIM = 0x3f; // 设置 ADC 内部时序，ADC采样时间建议设最大值
 
     RESFMT = 1;    // RESFMT 结果右对齐
+    EADC = 0;      // 关闭adc中断
     ADC_POWER = 1; // ADC_POWER, 使能ADC模块
 
     BGV = (VREFH_ADDR << 8) + VREFL_ADDR; // 从 CHIPID中读取内部参考电压值;
     // BGV = REF_BGV;
 
-    vccVoltage = VccVoltageRead();
+    VccVoltageRead();
 }
 
 /** adc读值 */
@@ -196,23 +239,24 @@ u16 AdcRead(u8 channel)
 #if 0 // 读3次值，丢弃前两次值，避免切换通道造成采样电容的残存电压影响
     for (i = 0; i < 3; i++)
     {
+        // count = 2000;
         // adc 读取
         ADC_START = 1; // 启动AD转换
         _nop_();
         _nop_();
-        _nop_();
-        _nop_();
 
-        while (!ADC_FLAG && count--)
+        // while (!ADC_FLAG && count--)
+        // { // 等待ADC完成
+        //     // delayUs(1);
+        //     _nop_();
+        //     _nop_();
+        //     _nop_();
+        //     _nop_();
+        //     _nop_();
+        // }
+        while (!ADC_FLAG)
         { // 等待ADC完成
-            // delayUs(1);
-            _nop_();
-            _nop_();
-            _nop_();
-            _nop_();
-            _nop_();
         }
-
         ADC_FLAG = 0; // 清完成标志
     }
 #else
@@ -220,8 +264,8 @@ u16 AdcRead(u8 channel)
     ADC_START = 1; // 启动AD转换
     _nop_();
     _nop_();
-    _nop_();
-    _nop_();
+    // _nop_();
+    // _nop_();
 
     while (!ADC_FLAG && count--)
     { // 等待ADC完成
@@ -238,8 +282,12 @@ u16 AdcRead(u8 channel)
 
     if (count != 0)
     {
-        adc_val = ADC_RES << 8 | ADC_RESL; // 读取ADC结果
-        return (u16)(adc_val);             // 12位adc 分辨率为 4096
+        adc_val = (ADC_RES & 0x0f) << 8 | ADC_RESL;
+        if (adc_val > 4095)
+        {
+            return 0; // 数据错误,返回0
+        }
+        return (u16)(adc_val); // 12位adc 分辨率为 4096
     }
     else
     {
@@ -260,55 +308,134 @@ u16 AdcReadVoltage(u8 channel)
 u16 VccVoltageRead()
 {
     refVoltage = AdcRead(REF_VOLTAGE_CHANNEL);
-    vccVoltage = (u16)((4096L * BGV / refVoltage));
+    _adcVal = (u16)((4096L * BGV / refVoltage));
+    if (_adcVal != 0)
+    {
+        vccVoltage = _adcVal;
+    }
     return vccVoltage;
 }
 
 /** 读取USB输入电压(mV)*/
 u16 UsbVoltageRead()
 {
-    return (u16)(AdcReadVoltage(USB_VOLTAGE_CHANNEL) * USB_VOLTAGE_GAIN); // 返回读值
+    // return (u16)(AdcReadVoltage(USB_VOLTAGE_CHANNEL));
+    _adcVal = (u16)(AdcReadVoltage(USB_VOLTAGE_CHANNEL) * USB_VOLTAGE_GAIN); // 返回读值
+    if (_adcVal != 0)
+    {
+        usbVoltage = _adcVal;
+    }
+    return usbVoltage;
 }
 
-/** 读取Battery输出电压(mV) */
-u16 BatteryVoltageRead()
+/** 读取USB输入电流(mA)*/
+u16 UsbCurrentRead()
 {
-    return (u16)(AdcReadVoltage(BATTERY_VOLTAGE_CHANNEL) * BATTERY_VOLTAGE_GAIN); // 返回读值
+    // 差分放大100倍，除以0.005欧姆电阻
+    // return (u16)((AdcReadVoltage(USB_CURRENT_CHANNEL)) / 0.005 / 100);
+    _adcVal = (u16)((AdcReadVoltage(USB_CURRENT_CHANNEL)) * USB_CURRENT_GAIN);
+    if (_adcVal != 0)
+    {
+        usbCurrent = _adcVal;
+    }
+    return usbCurrent;
 }
 
 /** 读取output输出电压(mV) */
 u16 OutputVoltageRead()
 {
-    return (u16)(AdcReadVoltage(OUTPUT_VOLTAGE_CHANNEL) * OUTPUT_VOLTAGE_GAIN); // 返回读值
-}
-
-u16 UsbCurrentRead()
-{
-    // 差分放大100倍，除以0.005欧姆电阻
-    // return (u16)((AdcReadVoltage(USB_CURRENT_CHANNEL)) / 0.005 / 100); // 返回读值 电流 = （测量电压-1.25V）/100/0.05
-    return (u16)((AdcReadVoltage(USB_CURRENT_CHANNEL)) * gain); // 返回读值 电流 = （测量电压-1.25V）/100/0.05
-}
-
-/** 读取Battery输出电流(mA)
- * 正值 充电
- * 负值 输出
- */
-int16 BatteryCurrentRead()
-{
-    // 差分放大100倍，除以0.005欧姆电阻
-    return -(int16)((AdcReadVoltage(BATTERY_CURRENT_CHANNEL) - 1250) / 0.005 / 100); // 返回读值 电流 = （测量电压-1.25V）/100/0.05
+    _adcVal = (u16)(AdcReadVoltage(OUTPUT_VOLTAGE_CHANNEL) * OUTPUT_VOLTAGE_GAIN); // 返回读值
+    if (_adcVal != 0)
+    {
+        outputVoltage = _adcVal;
+    }
+    return outputVoltage;
 }
 
 /** 读取Output输出电流(mA)*/
 u16 OutputCurrentRead()
 {
     // 差分放大100倍，除以0.005欧姆电阻
-    return (u16)((AdcReadVoltage(OUTPUT_CURRENT_CHANNEL)) / 0.005 / 100); // 返回读值 电流 = （测量电压-1.25V）/100/0.05
+    _adcVal = (u16)((AdcReadVoltage(OUTPUT_CURRENT_CHANNEL)) * OUTPUT_CURRENT_GAIN);
+    if (_adcVal != 0)
+    {
+        outputCurrrent = _adcVal;
+    }
+    return outputCurrrent;
+}
+
+/** 读取Battery输出电压(mV)
+ *
+ * filter 是否开启过滤
+ */
+
+u16 BatteryVoltageRead(bool filter)
+{
+    _adcVal = (u16)(AdcReadVoltage(BATTERY_VOLTAGE_CHANNEL) * BATTERY_VOLTAGE_GAIN);
+    if (_adcVal != 0)
+    {
+        if (filter)
+        {
+            batVoltError = _adcVal - lastVaildBatVolt;
+            if (batVoltError > BatVoltMaxVaildError || batVoltError < -BatVoltMaxVaildError)
+            {
+                batVoltErrorCount += 1;
+                if (batVoltErrorCount < BatVoltMaxErrorCount)
+                {
+                    return batteryVoltage; // 结束
+                }
+            }
+        }
+
+        // valid 值
+        batteryVoltage = _adcVal;
+        lastVaildBatVolt = batteryVoltage;
+        batVoltErrorCount = 0;
+    }
+    return batteryVoltage;
+}
+
+/** 读取Battery输出电流(mA)
+ * 正值 充电
+ * 负值 输出
+ *
+ * filter 是否开启过滤
+ */
+int16 BatteryCurrentRead(bool filter)
+{
+    // 差分放大100倍，除以0.005欧姆电阻
+    _adcVal = -(int16)((AdcReadVoltage(BATTERY_CURRENT_CHANNEL) - 1250) * BATTERY_CURRENT_GAIN); // 返回读值 电流 = （测量电压-1.25V）/100/0.05
+    if (_adcVal != 0)
+    {
+        if (filter)
+        {
+            batCurrError = _adcVal - lastVaildBatCurr;
+            if (batCurrError > BatCurrMaxVaildError || batCurrError < -BatCurrMaxVaildError)
+            {
+                batCurrErrorCount += 1;
+                if (batCurrErrorCount < BatCurrMaxErrorCount)
+                {
+                    return batteryCurrent; // 结束
+                }
+            }
+        }
+
+        // valid 值
+        batteryCurrent = _adcVal;
+        lastVaildBatCurr = batteryCurrent;
+        batCurrErrorCount = 0;
+    }
+    return batteryCurrent;
 }
 
 u16 PowerSourceVoltageRead()
 {
-    return (u16)(AdcReadVoltage(POWER_SOURCE_CHANNEL) * POWER_SOURCE_VOLTAGE_GAIN); // 返回读值
+    _adcVal = (u16)(AdcReadVoltage(POWER_SOURCE_CHANNEL) * POWER_SOURCE_VOLTAGE_GAIN); // 返回读值
+    if (_adcVal != 0)
+    {
+        powerSourceVoltage = _adcVal;
+    }
+    return powerSourceVoltage;
 }
 
 // ======================== 电池充电相关 ==================================
@@ -416,13 +543,8 @@ float pidCalculate(u16 current_vol)
 
 // 电池电量相关
 // =============================================================
-#define P7Voltage 6800   // 电池 7% 电量测量点电压
-#define P3Voltage 6500   // 电池 3% 电量测量点电压
-#define MinVoltage 6200  // 电池 0% 电量测量点电压
-#define MaxVoltage 8240  // mV 100% 时电压
-#define MaxCapacity 2000 // mAh 默认电池最大容量
-
 u8 P7caliFlag = 0;
+u16 lastVaildBatteryVoltage = 0;
 
 // u16 BatteryIR = 50;           // mOhm 电池内阻
 
@@ -453,41 +575,81 @@ u8 P7caliFlag = 0;
 //     return IR;
 // }
 
-/** 上电时初始化电池剩余容量 */
+/** 上电时初始化电池剩余容量
+ *
+ *  需要先初始化adc，并等待adc电源稳定>2ms,
+ */
+#define SamplingTimes 10
 void CapacityInit()
 {
-    u16 _bat_volt = 0;
+    u16 _batVolt = 0;
+    uint32 _batVoltSum = 0;
+    u8 validCount = 0;
+    u8 i = 0;
 
-    _bat_volt = BatteryVoltageRead();
+    for (i = 0; i < SamplingTimes; i++)
+    {
+        // 读值
+        _batVolt = BatteryVoltageRead(false);
+        // 检查数据是否有效 （如果>6v 且 < 8.5V）有效
+        if (_batVolt > 6000 && _batVolt < 8500)
+        {
+            validCount++;
+            _batVoltSum += _batVolt;
+        }
+    }
 
-    if (_bat_volt > MaxVoltage)
+    // 如果数据有效个数>5
+    if (validCount > 5)
     {
-        batteryCapctiy = MaxCapacity;
+        _batVolt = _batVoltSum / validCount;
+        lastVaildBatteryVoltage = _batVolt;
+        is_bat_plugged_in = true;
+        // 计算容量
+        if (_batVolt > MaxVoltage)
+        {
+            batteryCapctiy = MaxCapacity;
+        }
+        else if (_batVolt < MinVoltage)
+        {
+            batteryCapctiy = 0;
+        }
+        else if (_batVolt > P7Voltage)
+        {
+            // 注意计算顺序 和 数据类型、范围
+            // batteryCapctiy = MaxCapacity*0.7 + (float)(_batVolt - P7Voltage) / (MaxVoltage - P7Voltage) * MaxCapacity * (1 - 0.07);
+            batteryCapctiy = 140 + (_batVolt - P7Voltage) / 1440.0 * 1860;
+        }
+        else if (_batVolt < P7Voltage)
+        {
+            // batteryCapctiy = (float)(_batVolt - MinVoltage) / (P7Voltage - MinVoltage) * MaxCapacity * (0.07);
+            batteryCapctiy = (float)(_batVolt - MinVoltage) / 600 * 140;
+        }
     }
-    else if (_bat_volt < MinVoltage)
+    else // 数据无效，容量为0
     {
-        batteryCapctiy = 0;
-    }
-    else if (_bat_volt > P7Voltage)
-    {
-        // batteryCapctiy = _bat_volt;
-        // 注意计算顺序 和 数据类型、范围
-        // batteryCapctiy = MaxCapacity*0.7 + (float)(_bat_volt - P7Voltage) / (MaxVoltage - P7Voltage) * MaxCapacity * (1 - 0.07);
-        batteryCapctiy = 140 + (_bat_volt - P7Voltage) / 1440.0 * 1860;
-    }
-    else if (_bat_volt < P7Voltage)
-    {
-        // batteryCapctiy = (float)(_bat_volt - MinVoltage) / (P7Voltage - MinVoltage) * MaxCapacity * (0.07);
-        batteryCapctiy = (float)(_bat_volt - MinVoltage) / 600 * 140;
+        batteryCapctiy = 0.0;
     }
 }
-
 /** 更新电量容量
  * current 电流(mA)
  * interval 计算间隔（ms）
  */
+
 void UpdateCapacity(int16 current, u16 interval)
 {
+    int16 _vol_err = 0;
+
+    // 数据不正确，或无电池，跳过电量计算
+    _vol_err = (int16)(batteryVoltage - lastVaildBatteryVoltage);
+    if (_vol_err > 500 || _vol_err < -500)
+    {
+        return;
+    }
+    else
+    {
+        lastVaildBatteryVoltage = batteryVoltage;
+    }
 
     // calibrate the capacity at 7 % point
     if (batteryVoltage < P7Voltage && P7caliFlag == 0)
