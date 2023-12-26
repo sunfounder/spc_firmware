@@ -15,7 +15,7 @@
 #define MAIN_Fosc 35000000L // 定义主时钟 35MHz
 
 // pwm频率 = 系统时钟/（（预分频+1）/ （自动重装载值arr+1））= 35MHz / 16 / 21,875 = 100Hhz
-#define _PWMA_PSCR 16      // 预分频 24
+#define _PWMA_PSCR 16      // 预分频 16
 #define _PWMA_PERIOD 21875 // PWM周期 (PWMA_ARR自动重装值) 21,875
 
 void FanInit();
