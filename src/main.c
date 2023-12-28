@@ -400,6 +400,7 @@ void TM0_Isr() interrupt 1
 u8 edata hasPressed = 0;
 
 u8 edata ShutdownRequest = 0;
+extern bool edata outputState;
 
 extern u8 edata lastRgbState;
 extern u8 edata SafeShutdownColor[];
@@ -540,6 +541,15 @@ void KeyStateHandler()
 void KeyEventHandler()
 {
     // -------------- 按键处理程序 --------------
+    if (outputState == 0 && KeyMachineState == BTN_DOWN_SHAKE)
+    {
+        // 关机时按键按下则视为单击，进行开机
+        KeyMachineState = BTN_UP;
+        KeyState = SingleClicked;
+        scanTimeCount = 0;
+    }
+
+    //
     switch (KeyState)
     {
     case SingleClicked: // 单击开启输出
@@ -594,7 +604,6 @@ void KeyEventHandler()
 
 // rgb 状态灯， 与按键共用定时器0 来计数
 // =================================================================
-extern bool edata outputState;
 extern u8 edata is_usb_plugged_in;
 extern u8 edata power_source;
 extern u8 edata isLowPower;
@@ -1128,6 +1137,7 @@ void RTCSettingHandler()
 // =================================================================
 void Shutdown()
 {
+    ShutdownRequest = 0;
     dataBuffer[22] = 0; //  ShutdownRequest 复位
 
     if (boardID == 0 && is_usb_plugged_in == 0)
