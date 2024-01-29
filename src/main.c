@@ -53,10 +53,10 @@ PowerSaveFlag = 0;
 
 // VERSION INFO
 // =================================================================
-#define VERSION "1.0.0"
+#define VERSION "1.0.1"
 #define VERSION_MAJOR 1
 #define VERSION_MINOR 0
-#define VERSION_MICRO 0
+#define VERSION_MICRO 1
 
 // 产品ID
 // =================================================================
@@ -188,6 +188,8 @@ u8 edata dataBuffer[] = {
     30, // Firmware Version major
     31, // Firmware Version minor
     32, // Firmware Version micro
+
+    33, // RSTFLAG
 };
 
 // ---------------setting----------------------
@@ -631,7 +633,7 @@ u8 edata rgbBlinkFlag = 0;     // 0, 灭； 1，亮
  */
 u8 edata lastRgbState = 0;
 
-#define rgbBreathInterVal 50   // rgb 呼吸间隔
+#define rgbBreathInterVal 100  // rgb 呼吸间隔
 #define rgbBlinkInterval 500   // rgb 闪烁间隔 ms
 #define rgbStaticInterval 3000 // rgb 静态更新间隔
 u8 edata chargingColor[] = {255, 50, 0};
@@ -660,7 +662,28 @@ void RgbHandler()
     }
 
     // ----------------------------------------------------------------
-    if (isCharging)
+    if (ShutdownRequest == 2 || ShutdownRequest == 1) // 处于等待树莓派安全关机状态
+    {
+        if (rgbTimeCount > rgbBlinkInterval || lastRgbState != 1)
+        {
+            lastRgbState = 1;
+            if (rgbBrightness == 1)
+            {
+                rgbBrightness = 0;
+                rgbClose();
+            }
+            else
+            {
+                rgbBrightness = 1;
+                rgbR = SafeShutdownColor[0];
+                rgbG = SafeShutdownColor[1];
+                rgbB = SafeShutdownColor[2];
+                rgbWrite(rgbR, rgbG, rgbB);
+            }
+            rgbTimeCount = 0;
+        }
+    }
+    else if (isCharging)
     {
         if (rgbTimeCount > rgbBreathInterVal || lastRgbState != 1)
         {
@@ -754,8 +777,10 @@ void RgbHandler()
 // 外部中断0（INT0 P32 上升沿中断唤醒）
 // 外部中断1（INT1 P33 下降沿中断唤醒）
 // =================================================================
-u8 edata hasSleep = false;  // 是否进入过休眠
-u8 edata hasSleep2 = false; //
+u8 edata hasSleep = false;    // 是否进入过休眠
+u8 edata hasSleep2 = false;   //
+u8 edata isUsbWakeUp = false; //
+
 void PowerSaveMode()
 {
 #if 0
@@ -850,7 +875,23 @@ void PowerSaveMode()
     delayMs(1);
     PowerInHold();
 
-    PowerOutOpen();
+    // usb 唤醒
+    if (isUsbWakeUp)
+    {
+        // 检查AlwayOn短接片状态
+        if (ALWAYS_ON == 0) // 短接片已接上
+        {
+            delayUs(50); // 消抖
+            if (ALWAYS_ON == 0)
+            {
+                PowerOutOpen();
+            }
+        }
+    }
+    else // 按键唤醒
+    {
+        PowerOutOpen();
+    }
 
     PWMB_BKR = 0x80; // 使能PWMB主输出
     delayMs(10);
@@ -882,6 +923,7 @@ void INT1_Isr() interrupt 2
 // 外部中断 INT0 中断服务函数
 void INT0_Isr() interrupt 0
 {
+    isUsbWakeUp = true;
     // EX0 = 0; // 关闭INT0中断
 }
 
@@ -961,9 +1003,13 @@ void powerProcess()
     // ---- 判断供电和电池状态 ----
     // isCharging
     if (batteryCurrent > 100)
+    {
         isCharging = 1;
+    }
     else if (batteryCurrent < 20)
+    {
         isCharging = 0;
+    }
 
     // isLowPower
     if (batteryPercentage < LOW_BATTERY_WARNING)
@@ -1014,7 +1060,7 @@ void powerProcess()
     if (boardID == 0)
     {
         PowerSourceVoltageRead();
-        if (powerSourceVoltage < 3100)
+        if (outputState && (powerSourceVoltage < 3100))
         {
             setDac(1500);
             dac_vol = 1500;
@@ -1137,8 +1183,20 @@ void RTCSettingHandler()
 // =================================================================
 void Shutdown()
 {
+    u8 i = 0;
+
     ShutdownRequest = 0;
     dataBuffer[22] = 0; //  ShutdownRequest 复位
+
+    // 紫色快速闪烁5下
+    rgbClose();
+    for (i = 0; i < 5; i++)
+    {
+        rgbWrite(SafeShutdownColor[0], SafeShutdownColor[1], SafeShutdownColor[2]);
+        delayMs(100);
+        rgbClose();
+        delayMs(100);
+    }
 
     if (boardID == 0 && is_usb_plugged_in == 0)
     {
@@ -1158,6 +1216,8 @@ void RpiShutdownHandler()
         delayMs(5); // 5ms消抖
         if (RPI_STATE == 1)
         {
+
+            //
             Shutdown();
         }
     }
@@ -1256,6 +1316,8 @@ void init()
     dataBuffer[31] = VERSION_MINOR;
     dataBuffer[32] = VERSION_MICRO;
 
+    dataBuffer[33] = RSTFLAG;
+
     dataBuffer[21] = 0;
 
     rgbInit();               // 初始化rgb灯
@@ -1313,7 +1375,7 @@ void main()
             NoPowerHandler();
             UsbUnpluggedHandler();
 
-            if (hasSleep == false) // 如果休眠过则跳过唤醒后的首次运行
+            if (!(hasSleep)) // 如果休眠过则跳过唤醒后的首次运行
             {
                 KeyStateHandler();
                 KeyEventHandler();
